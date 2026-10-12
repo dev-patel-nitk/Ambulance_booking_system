@@ -10,6 +10,8 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 22.11.0
+      - key: NODE_OPTIONS
+        value: "--experimental-sqlite"
       - key: NODE_ENV
         value: production
       - key: CORS_ORIGIN
