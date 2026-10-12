@@ -30,11 +30,16 @@ function getMailTransporter() {
   if (!config.email?.user || !config.email?.pass) return null;
   const nodemailer = require('nodemailer');
   mailTransporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
     auth: {
       user: config.email.user,
       pass: config.email.pass,
     },
+    connectionTimeout: 4000,
+    greetingTimeout: 4000,
+    socketTimeout: 4000,
   });
   return mailTransporter;
 }
@@ -44,13 +49,18 @@ const usingEmail = () => Boolean(config.email?.user && config.email?.pass);
 async function sendEmail({ to, subject, html, text }) {
   const transporter = getMailTransporter();
   if (!transporter) throw new Error('Email credentials not configured');
-  return transporter.sendMail({
-    from: config.email.from || `"Ambulance Booking System" <${config.email.user}>`,
-    to,
-    subject,
-    text,
-    html,
-  });
+  return Promise.race([
+    transporter.sendMail({
+      from: config.email.from || `"Ambulance Booking System" <${config.email.user}>`,
+      to,
+      subject,
+      text,
+      html,
+    }),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Email send timed out (4s)')), 4000)
+    ),
+  ]);
 }
 
 function record({ recipientPhone, channel, templateId, body, bookingId, deliveryState, providerResponse }) {

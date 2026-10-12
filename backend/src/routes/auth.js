@@ -174,7 +174,11 @@ router.post('/otp/request', otpRequestLimiter, asyncRoute(async (req, res) => {
     'INSERT INTO otps (phone_no, otp_code, otp_expiry, purpose, created_at) VALUES (?, ?, ?, ?, ?)'
   ).run(targetKey, otp_code, otp_expiry, purpose, nowIso());
 
-  await messaging.sendOtp({ phoneNo: user?.phone_no || '', email: targetEmail, otpCode: otp_code });
+  try {
+    await messaging.sendOtp({ phoneNo: user?.phone_no || '', email: targetEmail, otpCode: otp_code });
+  } catch (err) {
+    console.error('[auth] Email OTP dispatch error:', err.message);
+  }
   audit('OTP_ISSUED', { entityType: 'auth', entityId: targetEmail, details: { purpose } });
 
   res.json({
