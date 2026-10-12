@@ -21,7 +21,7 @@ const config = {
 
   jwtSecret: process.env.JWT_SECRET || 'dev-only-secret-change-me',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '24h',
-  exposeOtp: bool(process.env.EXPOSE_OTP_IN_RESPONSE, true),
+  exposeOtp: bool(process.env.EXPOSE_OTP_IN_RESPONSE, false),
 
   dispatch: {
     offerTimeoutSeconds: int(process.env.OFFER_TIMEOUT_SECONDS, 45),
@@ -67,8 +67,8 @@ const config = {
   email: {
     provider: (process.env.EMAIL_PROVIDER || 'smtp').toLowerCase(),
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: int(process.env.SMTP_PORT, 465),
-    secure: bool(process.env.SMTP_SECURE, true),
+    port: int(process.env.SMTP_PORT, 587),
+    secure: bool(process.env.SMTP_SECURE, false),
     user: process.env.SMTP_USER || '',
     pass: process.env.SMTP_PASS || '',
     from: process.env.EMAIL_FROM || (process.env.SMTP_USER ? `Ambulance System <${process.env.SMTP_USER}>` : ''),

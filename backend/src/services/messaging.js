@@ -29,17 +29,22 @@ function getMailTransporter() {
   if (mailTransporter) return mailTransporter;
   if (!config.email?.user || !config.email?.pass) return null;
   const nodemailer = require('nodemailer');
+  const port = Number(config.email.port || 587);
+  const secure = Boolean(config.email.secure && port === 465);
   mailTransporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
+    host: config.email.host || 'smtp.gmail.com',
+    port,
+    secure,
     auth: {
       user: config.email.user,
       pass: config.email.pass,
     },
-    connectionTimeout: 4000,
-    greetingTimeout: 4000,
-    socketTimeout: 4000,
+    tls: {
+      rejectUnauthorized: false,
+    },
+    connectionTimeout: 8000,
+    greetingTimeout: 8000,
+    socketTimeout: 8000,
   });
   return mailTransporter;
 }
@@ -58,7 +63,7 @@ async function sendEmail({ to, subject, html, text }) {
       html,
     }),
     new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Email send timed out (4s)')), 4000)
+      setTimeout(() => reject(new Error('Email send timed out (8s)')), 8000)
     ),
   ]);
 }

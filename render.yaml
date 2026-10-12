@@ -21,7 +21,7 @@ services:
       - key: JWT_EXPIRES_IN
         value: 24h
       - key: EXPOSE_OTP_IN_RESPONSE
-        value: "true"
+        value: "false"
       - key: OTP_CHANNEL
         value: email
       - key: EMAIL_PROVIDER
@@ -29,15 +29,19 @@ services:
       - key: SMTP_HOST
         value: smtp.gmail.com
       - key: SMTP_PORT
-        value: "465"
+        value: "587"
       - key: SMTP_SECURE
-        value: "true"
+        value: "false"
       - key: SMTP_USER
-        sync: false
+        value: devjipatelop@gmail.com
       - key: SMTP_PASS
-        sync: false
+        value: ravgiolawvhaiajj
       - key: EMAIL_FROM
         value: "Ambulance Booking System <devjipatelop@gmail.com>"
+      - key: SMS_PROVIDER
+        value: fast2sms
+      - key: FAST2SMS_API_KEY
+        value: EoYPAamSIegzNuXi0pK5jdkbL9Zx2fvlHCJFDMwsnW378yrcUGNjXrzvl6PfcHymexGSqMd8opB3LI2a
       - key: MAPS_PROVIDER
         value: osm
       - key: NOMINATIM_URL

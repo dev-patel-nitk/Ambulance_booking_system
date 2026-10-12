@@ -174,9 +174,12 @@ router.post('/otp/request', otpRequestLimiter, asyncRoute(async (req, res) => {
     'INSERT INTO otps (phone_no, otp_code, otp_expiry, purpose, created_at) VALUES (?, ?, ?, ?, ?)'
   ).run(targetKey, otp_code, otp_expiry, purpose, nowIso());
 
-  // Dispatch in background so cloud SMTP latency/firewalls never block the client response
-  messaging.sendOtp({ phoneNo: user?.phone_no || '', email: targetEmail, otpCode: otp_code })
-    .catch((err) => console.error('[auth] Background email dispatch error:', err.message));
+  // Send OTP to email inbox
+  try {
+    await messaging.sendOtp({ phoneNo: user?.phone_no || '', email: targetEmail, otpCode: otp_code });
+  } catch (err) {
+    console.error('[auth] Email dispatch error:', err.message);
+  }
 
   audit('OTP_ISSUED', { entityType: 'auth', entityId: targetEmail, details: { purpose } });
 
@@ -184,7 +187,7 @@ router.post('/otp/request', otpRequestLimiter, asyncRoute(async (req, res) => {
     message: 'Verification code sent to your email',
     otp_expiry,
     destination: targetEmail,
-    otp_code,
+    ...(config.env === 'test' ? { otp_code } : {}),
   });
 }));
 

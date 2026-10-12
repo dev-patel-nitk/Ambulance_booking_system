@@ -18,10 +18,13 @@ function mayViewBooking(bookingId, claims) {
     .get(bookingId);
   if (!booking) return false;
 
-  return (
-    booking.user_id === claims.sub ||
-    (Boolean(claims.providerId) && booking.assigned_provider_id === claims.providerId)
-  );
+  if (booking.user_id === claims.sub) return true;
+  if (claims.providerId && booking.assigned_provider_id === claims.providerId) return true;
+  if (booking.assigned_provider_id) {
+    const p = db.prepare('SELECT provider_id FROM providers WHERE user_id = ?').get(claims.sub);
+    if (p && p.provider_id === booking.assigned_provider_id) return true;
+  }
+  return false;
 }
 
 const roomForUser = (userId) => `user:${userId}`;

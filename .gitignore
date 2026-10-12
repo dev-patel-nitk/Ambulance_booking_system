@@ -18,6 +18,8 @@ dist/
 **/android/.gradle/
 **/android/app/.cxx/
 **/android/.cxx/
+**/android/local.properties
+**/.kotlin/
 
 # Logs
 *.log

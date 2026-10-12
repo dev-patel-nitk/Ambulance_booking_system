@@ -30,13 +30,16 @@ const CALL_HTML = `
   <script>
     let pc = null;
     let localStream = null;
+    let pendingCandidates = [];
     const remoteAudio = document.getElementById('remoteAudio');
 
     const config = {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' }
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' }
       ]
     };
 
@@ -64,6 +67,7 @@ const CALL_HTML = `
       if (pc) {
         try { pc.close(); } catch(e){}
       }
+      pendingCandidates = [];
       pc = new RTCPeerConnection(config);
 
       pc.onicecandidate = (event) => {
@@ -72,17 +76,38 @@ const CALL_HTML = `
         }
       };
 
+      const handleConnected = () => {
+        post('connected');
+      };
+
       pc.onconnectionstatechange = () => {
         post('connectionState', { state: pc.connectionState });
         if (pc.connectionState === 'connected') {
-          post('connected');
+          handleConnected();
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        post('iceState', { state: pc.iceConnectionState });
+        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+          handleConnected();
         }
       };
 
       pc.ontrack = (event) => {
         if (event.streams && event.streams[0]) {
-          remoteAudio.srcObject = event.streams[0];
+          const stream = event.streams[0];
+          remoteAudio.srcObject = stream;
           remoteAudio.play().catch(e => console.log('Audio play error', e));
+          try {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (AudioCtx) {
+              if (!window.audioCtx) window.audioCtx = new AudioCtx();
+              if (window.audioCtx.state === 'suspended') window.audioCtx.resume();
+              const src = window.audioCtx.createMediaStreamSource(stream);
+              src.connect(window.audioCtx.destination);
+            }
+          } catch(e){}
         }
       };
 
@@ -91,34 +116,46 @@ const CALL_HTML = `
 
     window.handleCall = async function(action, payload) {
       try {
-        if (action === 'START_OFFER') {
+        if (action === 'START_CALLER_OFFER') {
           await initStream();
           const peer = createPC();
           localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
           const offer = await peer.createOffer({ offerToReceiveAudio: 1 });
           await peer.setLocalDescription(offer);
           post('signal', { signal: { sdp: peer.localDescription } });
-        } else if (action === 'ACCEPT_OFFER') {
+        } else if (action === 'PREPARE_RECEIVER') {
           await initStream();
           const peer = createPC();
           localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
         } else if (action === 'PROCESS_SIGNAL') {
           const sig = payload.signal;
-          if (!pc) {
-            await initStream();
-            createPC();
-            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-          }
+          if (!sig) return;
 
           if (sig.sdp) {
+            if (!pc) {
+              await initStream();
+              createPC();
+              localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+            }
             await pc.setRemoteDescription(new RTCSessionDescription(sig.sdp));
+
+            // Flush queued ICE candidates
+            while (pendingCandidates.length > 0) {
+              const c = pendingCandidates.shift();
+              try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch(e){}
+            }
+
             if (sig.sdp.type === 'offer') {
               const answer = await pc.createAnswer();
               await pc.setLocalDescription(answer);
               post('signal', { signal: { sdp: pc.localDescription } });
             }
           } else if (sig.candidate) {
-            await pc.addIceCandidate(new RTCIceCandidate(sig.candidate));
+            if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+              await pc.addIceCandidate(new RTCIceCandidate(sig.candidate));
+            } else {
+              pendingCandidates.push(sig.candidate);
+            }
           }
         } else if (action === 'SET_MUTE') {
           if (localStream) {
@@ -130,7 +167,7 @@ const CALL_HTML = `
             localStream = null;
           }
           if (pc) {
-            pc.close();
+            try { pc.close(); } catch(e){}
             pc = null;
           }
           if (remoteAudio) {
@@ -159,7 +196,7 @@ export default function VoiceCallModal({
   isCaller = false,
   incomingCallData = null,
 }) {
-  const [callState, setCallState] = useState(isCaller ? 'DIALING' : 'INCOMING'); // DIALING, RINGING, CONNECTED, ENDED
+  const [callState, setCallState] = useState(isCaller ? 'DIALING' : 'INCOMING'); // DIALING, INCOMING, CONNECTING, CONNECTED, ENDED
   const [muted, setMuted] = useState(false);
   const [duration, setDuration] = useState(0);
   const [statusText, setStatusText] = useState(isCaller ? 'Calling…' : 'Incoming call…');
@@ -167,6 +204,7 @@ export default function VoiceCallModal({
 
   const webRef = useRef(null);
   const timerRef = useRef(null);
+  const ringTimeoutRef = useRef(null);
 
   // Request native Android microphone permission
   async function ensureMicPermission() {
@@ -224,21 +262,32 @@ export default function VoiceCallModal({
     const socket = getSocket();
     if (!socket || !visible) return undefined;
 
+    // Make sure we are subscribed to the booking room
+    if (bookingId) {
+      socket.emit('booking:subscribe', bookingId);
+    }
+
     const onCallAccepted = () => {
+      if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
       setStatusText('Connecting…');
+      setCallState('CONNECTING');
+      // Caller initiates the offer after receiver has accepted
+      sendEngine('START_CALLER_OFFER');
     };
 
     const onCallRejected = ({ reason }) => {
+      if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
       setStatusText(reason === 'busy' ? 'Line busy' : 'Call declined');
       setCallState('ENDED');
       setTimeout(handleClose, 1800);
     };
 
     const onCallEnded = () => {
+      if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
       setStatusText('Call ended');
       setCallState('ENDED');
       sendEngine('END');
-      setTimeout(handleClose, 1500);
+      setTimeout(handleClose, 1200);
     };
 
     const onCallSignal = ({ signal }) => {
@@ -255,10 +304,11 @@ export default function VoiceCallModal({
       socket.off('call:rejected', onCallRejected);
       socket.off('call:ended', onCallEnded);
       socket.off('call:signal', onCallSignal);
+      if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
     };
-  }, [visible]);
+  }, [visible, bookingId]);
 
-  // Handle caller start
+  // Handle caller start (dialing phase)
   useEffect(() => {
     if (visible && isCaller && engineReady && bookingId) {
       (async () => {
@@ -272,6 +322,7 @@ export default function VoiceCallModal({
 
         const socket = getSocket();
         if (socket) {
+          socket.emit('booking:subscribe', bookingId);
           socket.emit('call:invite', {
             bookingId,
             callerName: partnerName || 'Ambulance Contact',
@@ -279,7 +330,14 @@ export default function VoiceCallModal({
           });
         }
         setStatusText('Ringing…');
-        sendEngine('START_OFFER');
+        setCallState('DIALING');
+
+        // Ring timeout of 35 seconds
+        ringTimeoutRef.current = setTimeout(() => {
+          setStatusText('No answer');
+          setCallState('ENDED');
+          setTimeout(handleClose, 1500);
+        }, 35000);
       })();
     }
   }, [visible, isCaller, engineReady, bookingId]);
@@ -295,11 +353,12 @@ export default function VoiceCallModal({
 
     const socket = getSocket();
     if (socket && bookingId) {
+      socket.emit('booking:subscribe', bookingId);
       socket.emit('call:accept', { bookingId });
     }
     setStatusText('Connecting…');
     setCallState('CONNECTING');
-    sendEngine('ACCEPT_OFFER');
+    sendEngine('PREPARE_RECEIVER');
   }
 
   // Reject / Decline call
@@ -316,6 +375,7 @@ export default function VoiceCallModal({
   // Hang up active or dialing call
   function endCall() {
     Vibration.cancel();
+    if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
     const socket = getSocket();
     if (socket && bookingId) {
       socket.emit('call:end', { bookingId });
@@ -334,6 +394,7 @@ export default function VoiceCallModal({
 
   function handleClose() {
     Vibration.cancel();
+    if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
     sendEngine('END');
     setCallState(isCaller ? 'DIALING' : 'INCOMING');
     setMuted(false);
@@ -355,7 +416,7 @@ export default function VoiceCallModal({
         setCallState('CONNECTED');
         setStatusText('In-App Voice Call');
       } else if (msg.type === 'error') {
-        console.log('WebRTC Call Engine Error:', msg.error);
+        console.log('WebRTC Engine Error:', msg.error);
       }
     } catch (err) {
       // ignore
@@ -373,11 +434,11 @@ export default function VoiceCallModal({
   return (
     <Modal visible={visible} animationType="fade" transparent onRequestClose={endCall}>
       <View style={styles.overlay}>
-        {/* Hidden WebRTC Audio WebView */}
+        {/* Hidden WebRTC Audio WebView with Secure Origin */}
         <View style={styles.hiddenWeb}>
           <WebView
             ref={webRef}
-            source={{ html: CALL_HTML }}
+            source={{ html: CALL_HTML, baseUrl: 'https://ambulance-booking-system-72ui.onrender.com' }}
             originWhitelist={['*']}
             javaScriptEnabled
             domStorageEnabled
@@ -462,11 +523,13 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   },
   hiddenWeb: {
-    width: 1,
-    height: 1,
-    opacity: 0,
+    width: 2,
+    height: 2,
+    opacity: 0.01,
     position: 'absolute',
-    top: -100,
+    top: 0,
+    left: 0,
+    zIndex: -1,
   },
   card: {
     width: '100%',
