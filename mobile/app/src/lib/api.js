@@ -29,7 +29,16 @@ export function normaliseBaseUrl(input) {
 
 export async function loadBaseUrl() {
   const stored = await AsyncStorage.getItem(BASE_KEY);
-  if (stored) baseUrl = stored;
+  if (stored) {
+    if (stored.includes('localhost') || stored.includes('10.0.2.2') || stored.includes('127.0.0.1')) {
+      baseUrl = DEFAULT_API_URL;
+      await AsyncStorage.removeItem(BASE_KEY);
+    } else {
+      baseUrl = stored;
+    }
+  } else {
+    baseUrl = DEFAULT_API_URL;
+  }
   return baseUrl;
 }
 

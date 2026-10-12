@@ -14,25 +14,23 @@ import Constants from 'expo-constants';
  * user-editable override on top of this: the app should not need rebuilding
  * every time the Wi-Fi changes.
  */
+export const PRODUCTION_RENDER_URL = 'https://ambulance-booking-system-72ui.onrender.com';
+
 function resolveApiUrl() {
   const explicit = process.env.EXPO_PUBLIC_API_URL;
-  if (explicit) return explicit.replace(/\/$/, '');
-
-  const API_PORT = 4000;
-
-  const hostUri =
-    Constants.expoConfig?.hostUri ||
-    Constants.expoGoConfig?.debuggerHost ||
-    Constants.manifest2?.extra?.expoClient?.hostUri;
-
-  if (hostUri) {
-    const host = hostUri.split(':')[0];
-    return `http://${host}:${API_PORT}`;
+  if (explicit && !explicit.includes('localhost') && !explicit.includes('127.0.0.1')) {
+    return explicit.replace(/\/$/, '');
   }
 
-  // The Android emulator reaches the host machine through 10.0.2.2.
-  if (Platform.OS === 'android') return `http://10.0.2.2:${API_PORT}`;
-  return `http://localhost:${API_PORT}`;
+  // Standalone release APK running on Android device connects to Render cloud
+  if (Platform.OS === 'android' && typeof __DEV__ !== 'undefined' && !__DEV__) {
+    return PRODUCTION_RENDER_URL;
+  }
+  if (Platform.OS === 'android') {
+    return PRODUCTION_RENDER_URL;
+  }
+
+  return PRODUCTION_RENDER_URL;
 }
 
 /** The built-in default. The address actually used is `api.url`. */
