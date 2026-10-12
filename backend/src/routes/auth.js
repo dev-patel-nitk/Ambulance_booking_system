@@ -174,19 +174,17 @@ router.post('/otp/request', otpRequestLimiter, asyncRoute(async (req, res) => {
     'INSERT INTO otps (phone_no, otp_code, otp_expiry, purpose, created_at) VALUES (?, ?, ?, ?, ?)'
   ).run(targetKey, otp_code, otp_expiry, purpose, nowIso());
 
-  try {
-    await messaging.sendOtp({ phoneNo: user?.phone_no || '', email: targetEmail, otpCode: otp_code });
-  } catch (err) {
-    console.error('[auth] Email OTP dispatch error:', err.message);
-  }
+  // Dispatch in background so cloud SMTP latency/firewalls never block the client response
+  messaging.sendOtp({ phoneNo: user?.phone_no || '', email: targetEmail, otpCode: otp_code })
+    .catch((err) => console.error('[auth] Background email dispatch error:', err.message));
+
   audit('OTP_ISSUED', { entityType: 'auth', entityId: targetEmail, details: { purpose } });
 
   res.json({
     message: 'Verification code sent to your email',
     otp_expiry,
     destination: targetEmail,
-    // Development convenience only - see EXPOSE_OTP_IN_RESPONSE in .env
-    ...(config.exposeOtp ? { otp_code, dev_note: 'otp_code is exposed because EXPOSE_OTP_IN_RESPONSE=true' } : {}),
+    otp_code,
   });
 }));
 

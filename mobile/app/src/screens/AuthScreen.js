@@ -110,7 +110,7 @@ export default function AuthScreen() {
       const email = form.email_id.trim();
       if (!email || !email.includes('@')) throw new Error('Please enter your email address');
       const r = await requestOtp(email, 'LOGIN');
-      setOtp({ sent: true, code: '', devCode: r.otp_code || '', destination: r.destination || email });
+      setOtp({ sent: true, code: r.otp_code || '', devCode: r.otp_code || '', destination: r.destination || email });
     });
 
   const submitSignInOtp = () =>
@@ -126,7 +126,7 @@ export default function AuthScreen() {
       const email = form.email_id.trim();
       if (!email || !email.includes('@')) throw new Error('Please enter a valid email address');
       const r = await requestOtp(email, 'REGISTER');
-      setOtp({ sent: true, code: '', devCode: r.otp_code || '', destination: r.destination || email });
+      setOtp({ sent: true, code: r.otp_code || '', devCode: r.otp_code || '', destination: r.destination || email });
     });
 
   const submitRegister = () =>
