@@ -1,0 +1,50 @@
+services:
+  - type: web
+    name: ambulance-booking-backend
+    env: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 22.11.0
+      - key: NODE_ENV
+        value: production
+      - key: CORS_ORIGIN
+        value: "*"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 24h
+      - key: EXPOSE_OTP_IN_RESPONSE
+        value: "true"
+      - key: OTP_CHANNEL
+        value: email
+      - key: EMAIL_PROVIDER
+        value: smtp
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_SECURE
+        value: "true"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: EMAIL_FROM
+        value: "Ambulance Booking System <devjipatelop@gmail.com>"
+      - key: MAPS_PROVIDER
+        value: osm
+      - key: NOMINATIM_URL
+        value: https://nominatim.openstreetmap.org
+      - key: OSRM_URL
+        value: https://router.project-osrm.org
+      - key: PAYMENT_PROVIDER
+        value: mock
+      - key: WATCHDOG_ENABLED
+        value: "true"
+      - key: SEARCH_RADIUS_KM
+        value: "15"

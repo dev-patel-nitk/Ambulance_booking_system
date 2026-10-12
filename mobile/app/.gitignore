@@ -1,0 +1,12 @@
+node_modules/
+.expo/
+dist/
+.env
+*.log
+
+# Android build caches
+android/app/build/
+android/build/
+android/.gradle/
+android/app/.cxx/
+android/.cxx/
