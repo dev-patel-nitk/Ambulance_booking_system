@@ -83,18 +83,13 @@ The server listens on `http://localhost:4000`. You can verify system health at:
 
 ## 3. Mobile App (Android APK)
 
-### Connecting the App to the Backend
-A packaged APK cannot reach `localhost` because on a mobile device `localhost` refers to the phone itself. 
+### Live Cloud Backend (Zero Setup)
+The standalone APK is now pre-configured to connect directly to the live cloud backend:
+👉 **`https://ambulance-booking-system-72ui.onrender.com`**
 
-1. Ensure your phone and laptop are on the same Wi-Fi or mobile hotspot.
-2. Find your laptop's IP address (`ifconfig` or Wi-Fi settings, e.g. `10.71.19.230`).
-3. Open the installed app on your phone.
-4. At the bottom of the sign-in screen, tap **`Backend: ... [Change]`**.
-5. Enter your laptop's IP and port:
-   ```
-   10.71.19.230:4000
-   ```
-6. Tap **Save**. The app connects immediately.
+**Anyone who downloads the APK can immediately open the app on mobile data (4G/5G) or Wi-Fi without any configuration or local server needed!**
+
+*(Optional)* If you ever want to switch back to testing against your local laptop development server, simply tap **`Backend: ... [Change]`** at the bottom of the sign-in screen and type your local IP (e.g. `10.71.19.230:4000`).
 
 ---
 
