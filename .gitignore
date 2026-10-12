@@ -30,3 +30,4 @@ backend/data/*.db-journal
 # OS metadata
 .DS_Store
 **/.DS_Store
+*.apk
