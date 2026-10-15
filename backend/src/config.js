@@ -66,6 +66,8 @@ const config = {
 
   email: {
     provider: (process.env.EMAIL_PROVIDER || 'smtp').toLowerCase(),
+    resendApiKey: process.env.RESEND_API_KEY || '',
+    brevoApiKey: process.env.BREVO_API_KEY || '',
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
     port: int(process.env.SMTP_PORT, 587),
     secure: bool(process.env.SMTP_SECURE, false),

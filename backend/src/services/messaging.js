@@ -49,9 +49,64 @@ function getMailTransporter() {
   return mailTransporter;
 }
 
-const usingEmail = () => Boolean(config.email?.user && config.email?.pass);
+const usingEmail = () => Boolean(config.email?.resendApiKey || config.email?.brevoApiKey || (config.email?.user && config.email?.pass));
 
 async function sendEmail({ to, subject, html, text }) {
+  // 1. Resend HTTPS API (port 443 - bypasses all cloud SMTP port blocks)
+  if (config.email.resendApiKey) {
+    try {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${config.email.resendApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: config.email.from || 'Ambulance Booking System <onboarding@resend.dev>',
+          to: [to],
+          subject,
+          html,
+          text,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.id) {
+        return { messageId: data.id, transport: 'resend' };
+      }
+      console.warn('[email:resend] Failed, falling back to SMTP:', data);
+    } catch (e) {
+      console.warn('[email:resend] Error, falling back to SMTP:', e.message);
+    }
+  }
+
+  // 2. Brevo HTTPS API (port 443)
+  if (config.email.brevoApiKey) {
+    try {
+      const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'api-key': config.email.brevoApiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sender: { name: 'Ambulance Booking System', email: config.email.user || 'noreply@ambulance.app' },
+          to: [{ email: to }],
+          subject,
+          htmlContent: html,
+          textContent: text,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.messageId) {
+        return { messageId: data.messageId, transport: 'brevo' };
+      }
+      console.warn('[email:brevo] Failed, falling back to SMTP:', data);
+    } catch (e) {
+      console.warn('[email:brevo] Error, falling back to SMTP:', e.message);
+    }
+  }
+
+  // 3. Direct Gmail SMTP (port 587 STARTTLS)
   const transporter = getMailTransporter();
   if (!transporter) throw new Error('Email credentials not configured');
   return Promise.race([
@@ -63,7 +118,7 @@ async function sendEmail({ to, subject, html, text }) {
       html,
     }),
     new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Email send timed out (8s)')), 8000)
+      setTimeout(() => reject(new Error('Email send timed out (4s)')), 4000)
     ),
   ]);
 }
@@ -258,6 +313,22 @@ async function sendOtp({ phoneNo, email, otpCode }) {
       });
     } catch (err) {
       console.error(`\n[otp:email] Send failed to ${recipientEmail}:`, err.message, '\n');
+      if (phoneNo && usingFast2sms()) {
+        try {
+          const smsRes = await sendViaFast2SMS({ phoneNo, otpCode });
+          console.log(`\n[sms:fast2sms-fallback -> ${phoneNo}] OTP sent successfully via SMS fallback: ${otpCode}\n`);
+          return record({
+            recipientPhone: phoneNo,
+            channel: 'SMS',
+            templateId: 'FAST2SMS_OTP_FALLBACK',
+            body,
+            deliveryState: 'SENT',
+            providerResponse: smsRes,
+          });
+        } catch (smsErr) {
+          console.error('[sms:fast2sms-fallback] SMS fallback also failed:', smsErr.message);
+        }
+      }
       return record({
         recipientPhone: phoneNo || recipientEmail,
         channel: 'SMS',
