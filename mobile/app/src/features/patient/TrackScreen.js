@@ -192,11 +192,13 @@ export default function TrackScreen({ navigation }) {
             <Row label="Rating" value={`${booking.provider.rating} ★`} />
           </View>
           <View style={{ gap: spacing.sm, marginTop: spacing.md }}>
-            <Button
-              title="In-App Voice Call"
-              icon="🎙️"
-              onPress={startVoiceCall}
-            />
+            {!finished && ['ASSIGNED', 'ENROUTE', 'ARRIVED', 'ONBOARD'].includes(booking.booking_status) ? (
+              <Button
+                title="In-App Voice Call"
+                icon="🎙️"
+                onPress={startVoiceCall}
+              />
+            ) : null}
             <Button
               title={`Direct Phone Call (${booking.provider.phone_no})`}
               icon="📞"

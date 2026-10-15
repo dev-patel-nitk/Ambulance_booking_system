@@ -197,11 +197,13 @@ export default function TripScreen({ navigation }) {
           <Row label="Requested" value={dateTimeOf(trip.booking_timestamp)} />
         </View>
         <View style={{ gap: spacing.sm, marginTop: spacing.md }}>
-          <Button
-            title="In-App Voice Call"
-            icon="🎙️"
-            onPress={startVoiceCall}
-          />
+          {['ASSIGNED', 'ENROUTE', 'ARRIVED', 'ONBOARD'].includes(trip.trip_milestone) ? (
+            <Button
+              title="In-App Voice Call"
+              icon="🎙️"
+              onPress={startVoiceCall}
+            />
+          ) : null}
           {trip.patient?.phone_no ? (
             <Button
               title={`Direct Phone Call (${trip.patient.phone_no})`}

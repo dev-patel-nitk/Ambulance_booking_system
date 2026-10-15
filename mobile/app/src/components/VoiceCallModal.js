@@ -92,6 +92,8 @@ const CALL_HTML = `
         post('connectionState', { state: pc.connectionState });
         if (pc.connectionState === 'connected') {
           handleConnected();
+        } else if (pc.connectionState === 'failed') {
+          post('failed', { reason: 'Peer connection failed' });
         }
       };
 
@@ -99,6 +101,8 @@ const CALL_HTML = `
         post('iceState', { state: pc.iceConnectionState });
         if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
           handleConnected();
+        } else if (pc.iceConnectionState === 'failed') {
+          post('failed', { reason: 'ICE media transport failed' });
         }
       };
 
@@ -213,6 +217,17 @@ export default function VoiceCallModal({
   const webRef = useRef(null);
   const timerRef = useRef(null);
   const ringTimeoutRef = useRef(null);
+  const connectTimeoutRef = useRef(null);
+
+  const startConnectTimeout = () => {
+    if (connectTimeoutRef.current) clearTimeout(connectTimeoutRef.current);
+    connectTimeoutRef.current = setTimeout(() => {
+      setStatusText('Media connection timed out. Please use Direct Phone Call.');
+      setCallState('ENDED');
+      sendEngine('END');
+      setTimeout(handleClose, 2500);
+    }, 15000);
+  };
 
   // Request native Android microphone permission
   async function ensureMicPermission() {
@@ -243,6 +258,7 @@ export default function VoiceCallModal({
   // Start timer on call connected
   useEffect(() => {
     if (callState === 'CONNECTED') {
+      if (connectTimeoutRef.current) clearTimeout(connectTimeoutRef.current);
       setDuration(0);
       timerRef.current = setInterval(() => {
         setDuration((d) => d + 1);
@@ -279,6 +295,7 @@ export default function VoiceCallModal({
       if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
       setStatusText('Connecting…');
       setCallState('CONNECTING');
+      startConnectTimeout();
       // Caller initiates the offer after receiver has accepted
       sendEngine('START_CALLER_OFFER');
     };
@@ -366,12 +383,14 @@ export default function VoiceCallModal({
     }
     setStatusText('Connecting…');
     setCallState('CONNECTING');
+    startConnectTimeout();
     sendEngine('PREPARE_RECEIVER');
   }
 
   // Reject / Decline call
   function declineCall() {
     Vibration.cancel();
+    if (connectTimeoutRef.current) clearTimeout(connectTimeoutRef.current);
     const socket = getSocket();
     if (socket && bookingId) {
       socket.emit('call:reject', { bookingId, reason: 'declined' });
@@ -384,6 +403,7 @@ export default function VoiceCallModal({
   function endCall() {
     Vibration.cancel();
     if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
+    if (connectTimeoutRef.current) clearTimeout(connectTimeoutRef.current);
     const socket = getSocket();
     if (socket && bookingId) {
       socket.emit('call:end', { bookingId });
@@ -403,6 +423,7 @@ export default function VoiceCallModal({
   function handleClose() {
     Vibration.cancel();
     if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
+    if (connectTimeoutRef.current) clearTimeout(connectTimeoutRef.current);
     sendEngine('END');
     setCallState(isCaller ? 'DIALING' : 'INCOMING');
     setMuted(false);
@@ -421,8 +442,15 @@ export default function VoiceCallModal({
           socket.emit('call:signal', { bookingId, signal: msg.signal });
         }
       } else if (msg.type === 'connected') {
+        if (connectTimeoutRef.current) clearTimeout(connectTimeoutRef.current);
         setCallState('CONNECTED');
         setStatusText('In-App Voice Call');
+      } else if (msg.type === 'failed') {
+        if (connectTimeoutRef.current) clearTimeout(connectTimeoutRef.current);
+        setStatusText('Call connection failed. Please use Direct Phone Call.');
+        setCallState('ENDED');
+        sendEngine('END');
+        setTimeout(handleClose, 2500);
       } else if (msg.type === 'error') {
         console.log('WebRTC Engine Error:', msg.error);
       }
@@ -452,6 +480,7 @@ export default function VoiceCallModal({
             domStorageEnabled
             mediaPlaybackRequiresUserAction={false}
             allowsInlineMediaPlayback
+            mediaCapturePermissionGrantType="grant"
             onMessage={handleWebMessage}
           />
         </View>
