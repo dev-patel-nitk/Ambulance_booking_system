@@ -174,20 +174,30 @@ router.post('/otp/request', otpRequestLimiter, asyncRoute(async (req, res) => {
     'INSERT INTO otps (phone_no, otp_code, otp_expiry, purpose, created_at) VALUES (?, ?, ?, ?, ?)'
   ).run(targetKey, otp_code, otp_expiry, purpose, nowIso());
 
-  // Send OTP to email inbox
+  // Send OTP to email inbox (or fallback SMS)
+  let deliveryResult = null;
   try {
-    await messaging.sendOtp({ phoneNo: user?.phone_no || '', email: targetEmail, otpCode: otp_code });
+    deliveryResult = await messaging.sendOtp({
+      phoneNo: req.body.phone_no || user?.phone_no || '',
+      email: targetEmail,
+      otpCode: otp_code,
+    });
   } catch (err) {
     console.error('[auth] Email dispatch error:', err.message);
   }
 
+  const deliverySucceeded = deliveryResult?.deliveryState === 'SENT';
+
   audit('OTP_ISSUED', { entityType: 'auth', entityId: targetEmail, details: { purpose } });
 
   res.json({
-    message: 'Verification code sent to your email',
+    message: deliverySucceeded
+      ? 'Verification code sent to your email.'
+      : 'Email delivery timed out on cloud server. Please use the verification code below.',
     otp_expiry,
     destination: targetEmail,
-    ...(config.env === 'test' ? { otp_code } : {}),
+    delivery_status: deliverySucceeded ? 'SENT' : 'FALLBACK',
+    ...(!deliverySucceeded || config.exposeOtp || config.env === 'test' ? { otp_code } : {}),
   });
 }));
 

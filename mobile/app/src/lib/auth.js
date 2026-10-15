@@ -107,11 +107,12 @@ export function AuthProvider({ children }) {
         return adopt(await api.post('/api/auth/register', details), roleKey);
       },
 
-      requestOtp: (identifier, purpose = 'LOGIN') => api.post('/api/auth/otp/request', {
+      requestOtp: (identifier, purpose = 'LOGIN', extra = {}) => api.post('/api/auth/otp/request', {
         email: identifier.includes('@') ? identifier : undefined,
-        phone_no: identifier.includes('@') ? undefined : identifier,
+        phone_no: identifier.includes('@') ? extra.phone_no : identifier,
         identifier,
         purpose,
+        ...extra,
       }),
 
       async verifyOtp(roleKey, identifier, otp_code) {

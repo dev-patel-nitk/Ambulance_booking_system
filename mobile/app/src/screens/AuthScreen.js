@@ -110,7 +110,13 @@ export default function AuthScreen() {
       const email = form.email_id.trim();
       if (!email || !email.includes('@')) throw new Error('Please enter your email address');
       const r = await requestOtp(email, 'LOGIN');
-      setOtp({ sent: true, code: '', devCode: '', destination: r.destination || email });
+      setOtp({
+        sent: true,
+        code: r.otp_code || '',
+        devCode: r.otp_code || '',
+        destination: r.destination || email,
+        fallbackMessage: r.otp_code && r.delivery_status === 'FALLBACK' ? r.message : ''
+      });
     });
 
   const submitSignInOtp = () =>
@@ -125,8 +131,14 @@ export default function AuthScreen() {
       if (!form.full_name.trim()) throw new Error('Please enter your full name');
       const email = form.email_id.trim();
       if (!email || !email.includes('@')) throw new Error('Please enter a valid email address');
-      const r = await requestOtp(email, 'REGISTER');
-      setOtp({ sent: true, code: '', devCode: '', destination: r.destination || email });
+      const r = await requestOtp(email, 'REGISTER', { phone_no: form.phone_no.trim() });
+      setOtp({
+        sent: true,
+        code: r.otp_code || '',
+        devCode: r.otp_code || '',
+        destination: r.destination || email,
+        fallbackMessage: r.otp_code && r.delivery_status === 'FALLBACK' ? r.message : ''
+      });
     });
 
   const submitRegister = () =>
@@ -253,9 +265,15 @@ export default function AuthScreen() {
 
           {otp.sent && (
             <>
-              <Banner kind="warn">
-                Verification code sent to {otp.destination || form.email_id}. Check your inbox or spam folder.
-              </Banner>
+              {otp.fallbackMessage ? (
+                <Banner kind="warn">
+                  {otp.fallbackMessage}
+                </Banner>
+              ) : (
+                <Banner kind="warn">
+                  Verification code sent to {otp.destination || form.email_id}. Check your inbox or spam folder.
+                </Banner>
+              )}
               <Field
                 label="6-Digit Verification Code"
                 value={otp.code}

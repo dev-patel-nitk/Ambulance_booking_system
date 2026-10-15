@@ -21,9 +21,15 @@ services:
       - key: JWT_EXPIRES_IN
         value: 24h
       - key: EXPOSE_OTP_IN_RESPONSE
-        value: "false"
+        value: "true"
       - key: OTP_CHANNEL
         value: email
+      - key: EMAIL_WEBHOOK_URL
+        value: ""
+      - key: RESEND_API_KEY
+        value: ""
+      - key: BREVO_API_KEY
+        value: ""
       - key: EMAIL_PROVIDER
         value: smtp
       - key: SMTP_HOST

@@ -49,10 +49,28 @@ function getMailTransporter() {
   return mailTransporter;
 }
 
-const usingEmail = () => Boolean(config.email?.resendApiKey || config.email?.brevoApiKey || (config.email?.user && config.email?.pass));
+const usingEmail = () => Boolean(config.email?.webhookUrl || config.email?.resendApiKey || config.email?.brevoApiKey || (config.email?.user && config.email?.pass));
 
 async function sendEmail({ to, subject, html, text }) {
-  // 1. Resend HTTPS API (port 443 - bypasses all cloud SMTP port blocks)
+  // 1. Google Apps Script Webhook Relay (HTTPS port 443 - zero SMTP port blocks, native Gmail delivery)
+  if (config.email.webhookUrl) {
+    try {
+      const res = await fetch(config.email.webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to, subject, html, text }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.success || res.ok) {
+        return { messageId: 'webhook-' + Date.now(), transport: 'webhook' };
+      }
+      console.warn('[email:webhook] Webhook returned error:', data);
+    } catch (e) {
+      console.warn('[email:webhook] Webhook failed, falling back to SMTP:', e.message);
+    }
+  }
+
+  // 2. Resend HTTPS API (port 443 - bypasses all cloud SMTP port blocks)
   if (config.email.resendApiKey) {
     try {
       const res = await fetch('https://api.resend.com/emails', {
@@ -79,7 +97,7 @@ async function sendEmail({ to, subject, html, text }) {
     }
   }
 
-  // 2. Brevo HTTPS API (port 443)
+  // 3. Brevo HTTPS API (port 443)
   if (config.email.brevoApiKey) {
     try {
       const res = await fetch('https://api.brevo.com/v3/smtp/email', {
@@ -106,7 +124,7 @@ async function sendEmail({ to, subject, html, text }) {
     }
   }
 
-  // 3. Direct Gmail SMTP (port 587 STARTTLS)
+  // 4. Direct Gmail SMTP (port 587 STARTTLS)
   const transporter = getMailTransporter();
   if (!transporter) throw new Error('Email credentials not configured');
   return Promise.race([
@@ -142,7 +160,7 @@ function record({ recipientPhone, channel, templateId, body, bookingId, delivery
     providerResponse ? JSON.stringify(providerResponse).slice(0, 2000) : null,
     nowIso()
   );
-  return id;
+  return Object.assign(new String(id), { id, deliveryState });
 }
 
 /** Meta rejects a template parameter containing a newline or a tab. */
