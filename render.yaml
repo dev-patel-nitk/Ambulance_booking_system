@@ -29,11 +29,11 @@ services:
       - key: RESEND_API_KEY
         value: ""
       - key: BREVO_API_KEY
-        value: ""
+        sync: false
       - key: BREVO_SENDER_EMAIL
-        value: "devjipatelop@gmail.com"
+        value: "mr.cool0631@gmail.com"
       - key: EMAIL_PROVIDER
-        value: smtp
+        value: brevo
       - key: SMTP_HOST
         value: smtp.gmail.com
       - key: SMTP_PORT
