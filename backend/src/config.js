@@ -69,6 +69,7 @@ const config = {
     webhookUrl: process.env.EMAIL_WEBHOOK_URL || '',
     resendApiKey: process.env.RESEND_API_KEY || '',
     brevoApiKey: process.env.BREVO_API_KEY || '',
+    brevoSenderEmail: process.env.BREVO_SENDER_EMAIL || process.env.SMTP_USER || 'devjipatelop@gmail.com',
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
     port: int(process.env.SMTP_PORT, 587),
     secure: bool(process.env.SMTP_SECURE, false),

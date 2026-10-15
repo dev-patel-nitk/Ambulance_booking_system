@@ -98,3 +98,46 @@ test('10-digit formatting for Fast2SMS OTP', async (t) => {
     assert.equal(messaging.to10Digits('+91 (987) 654-3210'), '9876543210');
   });
 });
+
+test('Brevo HTTPS email delivery transport', async (t) => {
+  await t.test('sends email via Brevo API when brevoApiKey is configured', async () => {
+    const config = require('../../src/config');
+    const originalKey = config.email.brevoApiKey;
+    const originalFetch = global.fetch;
+
+    let capturedUrl = null;
+    let capturedOptions = null;
+
+    try {
+      config.email.brevoApiKey = 'test-brevo-api-key';
+      global.fetch = async (url, options) => {
+        capturedUrl = url;
+        capturedOptions = options;
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({ messageId: '<test-brevo-msg-id@brevo.com>' }),
+        };
+      };
+
+      const result = await messaging.sendEmail({
+        to: 'user@example.com',
+        subject: 'Test Subject',
+        html: '<p>Test</p>',
+        text: 'Test',
+      });
+
+      assert.equal(capturedUrl, 'https://api.brevo.com/v3/smtp/email');
+      assert.equal(capturedOptions.headers['api-key'], 'test-brevo-api-key');
+      const payload = JSON.parse(capturedOptions.body);
+      assert.equal(payload.to[0].email, 'user@example.com');
+      assert.equal(payload.subject, 'Test Subject');
+      assert.equal(result.transport, 'brevo');
+      assert.equal(result.messageId, '<test-brevo-msg-id@brevo.com>');
+    } finally {
+      config.email.brevoApiKey = originalKey;
+      global.fetch = originalFetch;
+    }
+  });
+});
+

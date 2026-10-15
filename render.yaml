@@ -30,6 +30,8 @@ services:
         value: ""
       - key: BREVO_API_KEY
         value: ""
+      - key: BREVO_SENDER_EMAIL
+        value: "devjipatelop@gmail.com"
       - key: EMAIL_PROVIDER
         value: smtp
       - key: SMTP_HOST

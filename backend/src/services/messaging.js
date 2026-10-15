@@ -97,17 +97,19 @@ async function sendEmail({ to, subject, html, text }) {
     }
   }
 
-  // 3. Brevo HTTPS API (port 443)
+  // 3. Brevo HTTPS API (port 443 - zero cloud port block, 300 free emails/day)
   if (config.email.brevoApiKey) {
     try {
+      const senderEmail = config.email.brevoSenderEmail || config.email.user || 'devjipatelop@gmail.com';
       const res = await fetch('https://api.brevo.com/v3/smtp/email', {
         method: 'POST',
         headers: {
           'api-key': config.email.brevoApiKey,
           'Content-Type': 'application/json',
+          Accept: 'application/json',
         },
         body: JSON.stringify({
-          sender: { name: 'Ambulance Booking System', email: config.email.user || 'noreply@ambulance.app' },
+          sender: { name: 'Ambulance Booking System', email: senderEmail },
           to: [{ email: to }],
           subject,
           htmlContent: html,
@@ -116,9 +118,10 @@ async function sendEmail({ to, subject, html, text }) {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.messageId) {
+        console.log(`[email:brevo] Sent successfully to ${to} (id: ${data.messageId})`);
         return { messageId: data.messageId, transport: 'brevo' };
       }
-      console.warn('[email:brevo] Failed, falling back to SMTP:', data);
+      console.warn('[email:brevo] API call failed:', res.status, data);
     } catch (e) {
       console.warn('[email:brevo] Error, falling back to SMTP:', e.message);
     }
