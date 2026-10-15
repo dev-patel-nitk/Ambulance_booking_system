@@ -182,11 +182,10 @@ function buildHtml(zoom, pickable) {
   var defaultCenter = [13.0104, 74.7942];
   var map = L.map('map', { zoomControl: true, attributionControl: false }).setView(defaultCenter, ${zoom});
 
-  // High quality CartoDB Voyager tiles with fallback
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+  // Free, open-source OpenStreetMap tiles (no API key required, no watermarks)
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
-    subdomains: 'abcd',
-    attribution: '&copy; CartoDB &copy; OpenStreetMap'
+    attribution: '&copy; OpenStreetMap contributors'
   }).addTo(map);
 
   var layer = L.layerGroup().addTo(map);
