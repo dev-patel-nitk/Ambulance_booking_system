@@ -118,9 +118,9 @@ export default function TrackScreen({ navigation }) {
   const currentIndex = MILESTONE_STEPS.findIndex((s) => s.code === (booking.trip?.trip_milestone || 'ASSIGNED'));
 
   const markers = [
-    { latitude: booking.latitude, longitude: booking.longitude, color: colors.accent, label: 'Pickup', radius: 11 },
+    { latitude: booking.latitude, longitude: booking.longitude, type: 'pickup', color: colors.accent, label: 'Your Pickup Point', radius: 12 },
     ...(track?.ambulance_location
-      ? [{ ...track.ambulance_location, color: colors.ok, label: 'Ambulance', radius: 11 }]
+      ? [{ ...track.ambulance_location, type: 'ambulance', color: colors.ok, label: `Ambulance (${booking.provider?.vehicle_reg_no || ''})`, radius: 12 }]
       : []),
   ];
 
@@ -171,9 +171,15 @@ export default function TrackScreen({ navigation }) {
       {/* -------------------------------------------------------- the map */}
       {!finished ? (
         <Card>
-          <MapPanel markers={markers} route={track?.route_points || []} height={280} />
+          <MapPanel
+            markers={markers}
+            route={track?.route_points || []}
+            eta={track?.trip?.eta_minutes != null ? { etaMinutes: track.trip.eta_minutes, distanceKm: track.trip.route_distance_km } : null}
+            center={booking ? [booking.latitude, booking.longitude] : null}
+            height={280}
+          />
           <Small style={{ marginTop: spacing.sm }}>
-            Red pin is your pickup point. Green marker is the ambulance
+            Red pin is your pickup point. Green vehicle marker is the ambulance
             {track?.ambulance_location?.gps_timestamp
               ? `, last reported ${dateTimeOf(track.ambulance_location.gps_timestamp)}`
               : ''}.

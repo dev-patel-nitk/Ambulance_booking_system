@@ -124,6 +124,21 @@ export function AuthProvider({ children }) {
         }), roleKey);
       },
 
+      async forgotPassword(identifier) {
+        return api.post('/api/auth/forgot-password', {
+          email: identifier.includes('@') ? identifier : undefined,
+          phone_no: identifier.includes('@') ? undefined : identifier,
+          identifier,
+        });
+      },
+
+      async resetPassword(token, new_password) {
+        return api.post('/api/auth/reset-password', {
+          token,
+          new_password,
+        });
+      },
+
       /**
        * Re-reads the account and, if there is one, its vehicle profile.
        *

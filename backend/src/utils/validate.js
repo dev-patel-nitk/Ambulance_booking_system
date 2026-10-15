@@ -66,6 +66,25 @@ function password(value, field = 'password') {
   return v;
 }
 
+/**
+ * Returns a password-strength assessment { score: 0-4, label, feedback }.
+ * Does NOT throw; callers decide whether to enforce a minimum score.
+ */
+function passwordStrength(value) {
+  const v = String(value || '');
+  let score = 0;
+  const feedback = [];
+
+  if (v.length >= 8) score++; else feedback.push('Use at least 8 characters');
+  if (/[A-Z]/.test(v)) score++; else feedback.push('Add an uppercase letter');
+  if (/[a-z]/.test(v)) score++; else feedback.push('Add a lowercase letter');
+  if (/[0-9]/.test(v)) score++; else feedback.push('Add a number');
+  if (/[^A-Za-z0-9]/.test(v)) { score++; } else { feedback.push('Add a special character'); }
+
+  const labels = ['Very weak', 'Weak', 'Fair', 'Good', 'Strong'];
+  return { score: Math.min(score, 4), label: labels[Math.min(score, 4)], feedback };
+}
+
 function oneOf(value, allowed, field) {
   const v = String(required(value, field)).toUpperCase();
   if (!allowed.includes(v)) {
@@ -113,7 +132,7 @@ function text(value, max, field) {
 
 module.exports = {
   ValidationError,
-  required, phone, name, email, password, oneOf, coordinate,
+  required, phone, name, email, password, passwordStrength, oneOf, coordinate,
   vehicleRegNo, pincode, rating, text,
   ROLE_CODES, AMBULANCE_TYPES, AVAILABILITY, VERIFICATION, BOOKING_STATUS,
   ASSIGNMENT_STATUS, TRIP_MILESTONES, PAYMENT_MODES, PAYMENT_STATUS,

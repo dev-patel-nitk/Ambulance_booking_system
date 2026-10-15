@@ -399,6 +399,86 @@ async function sendOtp({ phoneNo, email, otpCode }) {
   });
 }
 
+/** Outbound password reset email with token and direct link */
+async function sendPasswordResetEmail({ email, resetToken, resetUrl, userName }) {
+  const greeting = userName ? `Hello ${userName},` : 'Hello,';
+  const actionUrl = resetUrl || `http://localhost:3000/reset-password?token=${encodeURIComponent(resetToken)}`;
+  const body = `${greeting}\n\nYou requested a password reset for your Ambulance Booking System account.\n\nYour Reset Code is: ${resetToken}\nOr use this link to reset your password:\n${actionUrl}\n\nThis code and link are valid for 15 minutes. If you did not request this, please ignore this email.`;
+
+  if (usingEmail()) {
+    try {
+      const info = await sendEmail({
+        to: email,
+        subject: '🔐 Reset Your Ambulance Booking System Password',
+        text: body,
+        html: `
+          <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 28px; border: 1px solid #EBEAEA; border-radius: 12px; background-color: #FFFFFF; color: #150202;">
+            <div style="text-align: center; margin-bottom: 24px;">
+              <span style="font-size: 40px;">🚑</span>
+              <h2 style="color: #DC3545; margin: 8px 0 0; font-size: 22px; font-weight: 700;">Ambulance Booking System</h2>
+              <p style="color: #606060; font-size: 13px; margin-top: 4px;">Emergency Care & Transport Service</p>
+            </div>
+            <p style="font-size: 15px; line-height: 1.5; color: #150202; margin-bottom: 16px;">
+              ${greeting}
+            </p>
+            <p style="font-size: 14px; line-height: 1.6; color: #606060; margin-bottom: 20px;">
+              We received a request to reset the password for your account. Use the verification token below or tap the reset button.
+            </p>
+            <div style="background-color: #F8FAFC; border: 1px dashed #C6C6C6; border-radius: 8px; padding: 20px; text-align: center; margin-bottom: 24px;">
+              <p style="color: #606060; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; margin: 0 0 8px; font-weight: 600;">Password Reset Code</p>
+              <h1 style="font-size: 32px; letter-spacing: 6px; color: #DC3545; margin: 0; font-family: monospace; font-weight: bold;">${resetToken}</h1>
+              <p style="color: #FFC107; font-size: 12px; font-weight: 600; margin: 8px 0 0;">Valid for 15 minutes</p>
+            </div>
+            <div style="text-align: center; margin-bottom: 24px;">
+              <a href="${actionUrl}" style="background-color: #DC3545; color: #FFFFFF; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 600; font-size: 15px; display: inline-block;">
+                Reset Password
+              </a>
+            </div>
+            <p style="font-size: 13px; color: #606060; line-height: 1.5; margin-bottom: 20px;">
+              If the button doesn't work, copy and paste this URL into your browser:<br/>
+              <a href="${actionUrl}" style="color: #0D6EFD; word-break: break-all; font-size: 12px;">${actionUrl}</a>
+            </p>
+            <div style="border-top: 1px solid #EBEAEA; padding-top: 16px; text-align: center;">
+              <p style="color: #94a3b8; font-size: 11px; margin: 0;">If you didn't request a password reset, you can safely ignore this email.</p>
+            </div>
+          </div>
+        `,
+      });
+
+      console.log(`\n[reset:email -> ${email}] Reset token sent successfully (id: ${info.messageId})\n`);
+      return record({
+        recipientPhone: email,
+        channel: 'SMS',
+        templateId: 'EMAIL_PASSWORD_RESET',
+        body,
+        deliveryState: 'SENT',
+        providerResponse: { transport: 'email', messageId: info.messageId, recipient: email },
+      });
+    } catch (err) {
+      console.error(`\n[reset:email] Send failed to ${email}:`, err.message, '\n');
+      return record({
+        recipientPhone: email,
+        channel: 'SMS',
+        templateId: 'EMAIL_PASSWORD_RESET',
+        body,
+        deliveryState: 'FAILED',
+        providerResponse: { transport: 'email', error: err.message, detail: err },
+      });
+    }
+  }
+
+  // Fallback mock record when email is not configured
+  console.log(`\n[reset:mock -> ${email}] Reset Token: ${resetToken} | URL: ${actionUrl}\n`);
+  return record({
+    recipientPhone: email,
+    channel: 'SMS',
+    templateId: 'MOCK_PASSWORD_RESET',
+    body,
+    deliveryState: 'SENT',
+    providerResponse: { mock: true, resetToken, actionUrl },
+  });
+}
+
 /** Marks a delivery receipt, e.g. from a Meta webhook. */
 function updateDeliveryState(msgId, state) {
   db.prepare(
@@ -493,6 +573,7 @@ const templates = {
 module.exports = {
   sendWhatsApp,
   sendOtp,
+  sendPasswordResetEmail,
   sendEmail,
   sendViaFast2SMS,
   usingFast2sms,

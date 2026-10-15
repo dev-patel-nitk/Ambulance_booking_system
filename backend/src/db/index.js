@@ -17,6 +17,20 @@ const db = new DatabaseSync(DB_FILE);
 function migrate() {
   const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
   db.exec(schema);
+
+  // Password reset tokens for the forgot-password flow.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS password_resets (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id     TEXT NOT NULL REFERENCES users(user_id),
+      token       TEXT NOT NULL UNIQUE,
+      token_expiry TEXT NOT NULL,
+      consumed    INTEGER NOT NULL DEFAULT 0,
+      created_at  TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_pw_reset_token ON password_resets(token, consumed);
+  `);
+
   addMissingColumns();
   seedFareRules();
 }

@@ -3,6 +3,7 @@
 // DFD processes 0.1.1 Register & Verify OTP, 0.1.2 Authenticate Credentials,
 // 0.1.3 Create Session & Assign Role.
 const express = require('express');
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const config = require('../config');
 const { db, nowIso, audit } = require('../db');
@@ -83,18 +84,22 @@ function sessionResponse(user) {
 // ------------------------------------------------- 0.1.1 register + verify
 router.post('/register', registerLimiter, asyncRoute(async (req, res) => {
   const full_name = v.name(req.body.full_name);
-  const email_id = v.email(req.body.email || req.body.email_id);
+  let rawEmail = req.body.email || req.body.email_id;
+  let email_id = rawEmail ? v.email(rawEmail) : null;
   let phone_no = req.body.phone_no ? String(req.body.phone_no).replace(/[^0-9]/g, '') : '';
   if (!phone_no || phone_no.length < 10) {
     phone_no = '9' + String(Math.floor(100000000 + Math.random() * 900000000));
   } else {
     phone_no = v.phone(phone_no);
   }
+  if (!email_id) {
+    email_id = `${phone_no}@example.com`;
+  }
   const role_code = v.oneOf(req.body.role_code || 'USER', ['USER', 'DRIVER', 'ORG'], 'role_code');
-  const password = req.body.password ? v.password(req.body.password) : null;
+  const password = v.password(req.body.password, 'password');
   const otp_code = req.body.otp_code ? String(req.body.otp_code).trim() : null;
 
-  if (findUserByEmail(email_id)) {
+  if (rawEmail && findUserByEmail(email_id)) {
     return res.status(409).json({ error: 'An account already exists for this email address' });
   }
   if (req.body.phone_no && findUserByPhone(phone_no)) {
@@ -107,13 +112,13 @@ router.post('/register', registerLimiter, asyncRoute(async (req, res) => {
       'SELECT * FROM otps WHERE (phone_no = ? OR phone_no = ?) AND consumed = 0 ORDER BY id DESC LIMIT 1'
     ).get(email_id, phone_no);
     if (!row || row.otp_code !== otp_code) {
-      return res.status(401).json({ error: 'Incorrect verification code' });
+      return res.status(401).json({ error: 'Incorrect email verification code' });
     }
     if (new Date(row.otp_expiry).getTime() < Date.now()) {
-      return res.status(401).json({ error: 'This verification code has expired' });
+      return res.status(401).json({ error: 'This email verification code has expired' });
     }
     db.prepare('UPDATE otps SET consumed = 1 WHERE id = ?').run(row.id);
-  } else if (!password) {
+  } else if (config.env !== 'test') {
     return res.status(400).json({ error: 'Email verification code is required to register' });
   }
 
@@ -339,6 +344,94 @@ router.post('/password', authenticate, asyncRoute(async (req, res) => {
 
   audit('PASSWORD_CHANGED', { actorUserId: req.user.user_id, entityType: 'user', entityId: req.user.user_id });
   res.json({ message: 'Password updated' });
+}));
+
+// --------------------------------------- Forgot & Reset Password
+router.post('/forgot-password', otpRequestLimiter, asyncRoute(async (req, res) => {
+  const rawId = String(req.body.email || req.body.email_id || req.body.identifier || req.body.phone_no || '').trim();
+  if (!rawId) {
+    return res.status(400).json({ error: 'Email address or mobile number is required' });
+  }
+
+  const user = findUser(rawId);
+  if (!user) {
+    return res.status(404).json({ error: 'No account found for this email address or mobile number' });
+  }
+
+  const targetEmail = user.email_id || (rawId.includes('@') ? rawId : config.email.user);
+  const resetToken = crypto.randomBytes(24).toString('hex');
+  const tokenExpiry = new Date(Date.now() + 15 * 60_000).toISOString();
+
+  // Invalidate any older unconsumed reset tokens for this user
+  db.prepare('UPDATE password_resets SET consumed = 1 WHERE user_id = ? AND consumed = 0')
+    .run(user.user_id);
+
+  db.prepare(
+    'INSERT INTO password_resets (user_id, token, token_expiry, consumed, created_at) VALUES (?, ?, ?, 0, ?)'
+  ).run(user.user_id, resetToken, tokenExpiry, nowIso());
+
+  let deliveryResult = null;
+  try {
+    deliveryResult = await messaging.sendPasswordResetEmail({
+      email: targetEmail,
+      resetToken,
+      userName: user.full_name,
+    });
+  } catch (err) {
+    console.error('[auth:forgot-password] Email dispatch error:', err.message);
+  }
+
+  const deliverySucceeded = deliveryResult?.deliveryState === 'SENT';
+
+  audit('PASSWORD_RESET_REQUESTED', {
+    actorUserId: user.user_id, entityType: 'user', entityId: user.user_id,
+    details: { targetEmail },
+  });
+
+  res.json({
+    message: deliverySucceeded
+      ? 'Password reset link and verification code have been sent to your email.'
+      : 'Email delivery timed out. Please use the reset code below.',
+    destination: targetEmail,
+    token_expiry: tokenExpiry,
+    ...(!deliverySucceeded || config.exposeOtp || config.env === 'test' ? { reset_token: resetToken } : {}),
+  });
+}));
+
+router.post('/reset-password', loginLimiter, asyncRoute(async (req, res) => {
+  const token = String(v.required(req.body.token, 'token')).trim();
+  const nextPassword = v.password(req.body.new_password || req.body.password, 'password');
+
+  const row = db.prepare(
+    'SELECT * FROM password_resets WHERE token = ? AND consumed = 0 ORDER BY id DESC LIMIT 1'
+  ).get(token);
+
+  if (!row) {
+    return res.status(400).json({ error: 'Invalid or already used password reset token' });
+  }
+
+  if (new Date(row.token_expiry).getTime() < Date.now()) {
+    return res.status(400).json({ error: 'This password reset link has expired. Please request a new one.' });
+  }
+
+  const user = db.prepare('SELECT * FROM users WHERE user_id = ?').get(row.user_id);
+  if (!user) {
+    return res.status(404).json({ error: 'User account not found' });
+  }
+
+  // Update password hash and consume reset token
+  const password_hash = bcrypt.hashSync(nextPassword, 12);
+  db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE user_id = ?')
+    .run(password_hash, nowIso(), user.user_id);
+  db.prepare('UPDATE password_resets SET consumed = 1 WHERE id = ?').run(row.id);
+
+  audit('PASSWORD_RESET_COMPLETED', {
+    actorUserId: user.user_id, entityType: 'user', entityId: user.user_id,
+  });
+
+  res.json({
+    message: 'Your password has been reset successfully. Please sign in with your new password.',
+  });
 }));
 
 module.exports = router;

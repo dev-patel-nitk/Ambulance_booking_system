@@ -9,6 +9,7 @@ import { AMBULANCE_TYPES } from '../../lib/config';
 import { colors, money, radius, spacing, typo } from '../../lib/theme';
 import { Banner, Body, Button, Card, Field, H2, Loading, Pill, Small } from '../../components/ui';
 import MapPanel from '../../components/MapPanel';
+import { decodePolyline } from '../../lib/geo';
 
 // F.3 Select ambulance type and place booking, F.4 Capture pickup location.
 export default function BookScreen({ navigation }) {
@@ -25,6 +26,8 @@ export default function BookScreen({ navigation }) {
   const [patientName, setPatientName] = useState('');
   const [nearby, setNearby] = useState([]);
   const [estimate, setEstimate] = useState(null);
+  const [routePoints, setRoutePoints] = useState([]);
+  const [routeInfo, setRouteInfo] = useState(null);
   const [error, setError] = useState('');
   const [placing, setPlacing] = useState(false);
 
@@ -79,14 +82,39 @@ export default function BookScreen({ navigation }) {
       .catch(() => setNearby([]));
   }, [pickup]);
 
+  // Calculate road route and ETA between pickup and nearest ambulance
+  useEffect(() => {
+    if (!pickup || nearby.length === 0) {
+      setRoutePoints([]);
+      setRouteInfo(null);
+      return;
+    }
+    const nearest = nearby[0];
+    api
+      .get(`/api/geo/route?from_lat=${nearest.latitude}&from_lng=${nearest.longitude}&to_lat=${pickup.latitude}&to_lng=${pickup.longitude}`)
+      .then((r) => {
+        if (r.route?.route_polyline) {
+          setRoutePoints(decodePolyline(r.route.route_polyline));
+          setRouteInfo(r.route);
+        } else {
+          setRoutePoints([[nearest.latitude, nearest.longitude], [pickup.latitude, pickup.longitude]]);
+          setRouteInfo(r.route);
+        }
+      })
+      .catch(() => {
+        setRoutePoints([]);
+        setRouteInfo(null);
+      });
+  }, [pickup?.latitude, pickup?.longitude, nearby[0]?.provider_id]);
+
   // Indicative fare for the selected type, using the nearest ambulance distance.
   useEffect(() => {
-    const km = nearby[0]?.distance_km ?? 8;
+    const km = routeInfo?.route_distance_km ?? nearby[0]?.distance_km ?? 8;
     api
       .post('/api/bookings/estimate', { ambulance_type: ambulanceType, distance_km: km })
       .then((r) => setEstimate({ ...r.estimate, basis_km: km }))
       .catch(() => setEstimate(null));
-  }, [ambulanceType, nearby]);
+  }, [ambulanceType, nearby, routeInfo]);
 
   async function search() {
     if (!query.trim()) return;
@@ -149,10 +177,14 @@ export default function BookScreen({ navigation }) {
   }
 
   const markers = [
-    ...(pickup ? [{ ...pickup, color: colors.accent, label: 'Pickup', radius: 11 }] : []),
-    ...nearby.slice(0, 10).map((a) => ({
-      latitude: a.latitude, longitude: a.longitude, color: colors.ok, radius: 7,
-      label: `${a.ambulance_type} · ${a.distance_km} km`,
+    ...(pickup ? [{ ...pickup, type: 'pickup', color: colors.accent, label: 'Your Pickup Point', radius: 12 }] : []),
+    ...nearby.slice(0, 10).map((a, i) => ({
+      latitude: a.latitude,
+      longitude: a.longitude,
+      type: 'ambulance',
+      color: colors.ok,
+      radius: 9,
+      label: `${a.ambulance_type} Ambulance (${a.distance_km} km away)`,
     })),
   ];
 
@@ -169,23 +201,52 @@ export default function BookScreen({ navigation }) {
       <Card>
         <H2>Where are you?</H2>
         <Small style={{ marginTop: 4, marginBottom: spacing.md }}>
-          Tap the map to move the pin, or search for a landmark.
+          Tap the map to set your location, or search an address below.
         </Small>
 
         <MapPanel
           markers={markers}
-          height={230}
+          route={routePoints}
+          eta={routeInfo ? { etaMinutes: routeInfo.eta_minutes, distanceKm: routeInfo.route_distance_km } : null}
+          center={pickup ? [pickup.latitude, pickup.longitude] : null}
+          height={260}
           onPick={async (lat, lng) => {
             const coords = { latitude: Number(lat.toFixed(6)), longitude: Number(lng.toFixed(6)) };
             setPickup({ ...coords, address_text: 'Locating address…' });
             try {
               const rev = await api.get(`/api/geo/reverse?lat=${coords.latitude}&lng=${coords.longitude}`);
-              setPickup({ ...coords, address_text: rev.location.address_text, pincode: rev.location.pincode });
+              setPickup({ ...coords, address_text: rev.location.address_text || `${coords.latitude}, ${coords.longitude}`, pincode: rev.location.pincode });
             } catch {
               setPickup({ ...coords, address_text: `${coords.latitude}, ${coords.longitude}` });
             }
           }}
         />
+
+        {routeInfo ? (
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: `${colors.info}12`,
+              borderWidth: 1,
+              borderColor: `${colors.info}33`,
+              borderRadius: radius.sm,
+              padding: spacing.sm + 2,
+              marginTop: spacing.sm,
+              gap: 8,
+            }}
+          >
+            <Text style={{ fontSize: 20 }}>🚑</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 13.5, fontWeight: '700', color: colors.text }}>
+                Estimated Arrival: ~{routeInfo.eta_minutes} mins ({routeInfo.route_distance_km} km away)
+              </Text>
+              <Text style={{ fontSize: 11.5, color: colors.muted }}>
+                Calculated road route to nearest available unit
+              </Text>
+            </View>
+          </View>
+        ) : null}
 
         <View style={styles.pickupRow}>
           <Text style={{ fontSize: 18 }}>📍</Text>

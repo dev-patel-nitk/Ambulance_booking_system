@@ -1,30 +1,38 @@
 // One place for colour, spacing and type, so every screen looks the same.
 // NF.6: high contrast and large touch targets, because the person using this
 // app may be in distress.
+// Digital Brand Identity Manual (DBIM) Design System
+// Government Digital Service Standards compliant theme
+// NF.6: high contrast, accessible typography and large touch targets
 export const colors = {
-  bg: '#0f1520',
-  surface: '#172130',
-  surface2: '#1e2a3c',
-  line: '#2a3849',
-  text: '#e8eef7',
-  muted: '#93a4bb',
-  accent: '#e63946',
-  accentDark: '#c32f3b',
-  ok: '#2ec27e',
-  warn: '#f5a524',
-  info: '#4c8dff',
-  white: '#ffffff',
+  bg: '#FFFFFF',            // Inclusive White
+  surface: '#F8FAFC',       // Crisp neutral surface
+  surface2: '#EBEAEA',      // Linen / Subtle divider tint
+  card: '#FFFFFF',          // Clean card background
+  inputBg: '#FFFFFF',       // Input field background
+  line: '#D1D5DB',          // Grey border line (accessible contrast)
+  border: '#E2E8F0',        // Subtle border
+  text: '#150202',          // Deep Earthy Brown / Primary text
+  textSecondary: '#4A5568', // Accessible secondary text
+  muted: '#606060',         // Grey03 / Muted helper text
+  accent: '#DC3545',        // Coral Red (Emergency / Key Action / Danger)
+  accentDark: '#B02A37',    // Deep Coral Red
+  ok: '#198754',            // Liberty Green (Success / Verified)
+  warn: '#D97706',          // Mustard Amber (Warning / Pending - accessible on white)
+  info: '#0D6EFD',          // Liberty Blue (Info / In-progress)
+  white: '#FFFFFF',
+  shadow: 'rgba(0, 0, 0, 0.08)',
 };
 
 export const spacing = { xs: 4, sm: 8, md: 14, lg: 20, xl: 28 };
 export const radius = { sm: 8, md: 12, lg: 18, pill: 999 };
 
 export const typo = {
-  h1: { fontSize: 26, fontWeight: '700', color: colors.text },
-  h2: { fontSize: 19, fontWeight: '700', color: colors.text },
+  h1: { fontSize: 26, fontWeight: '700', color: colors.text, letterSpacing: -0.5 },
+  h2: { fontSize: 19, fontWeight: '700', color: colors.text, letterSpacing: -0.3 },
   h3: { fontSize: 15, fontWeight: '600', color: colors.text },
-  body: { fontSize: 15, color: colors.text },
-  small: { fontSize: 13, color: colors.muted },
+  body: { fontSize: 15, color: colors.text, lineHeight: 22 },
+  small: { fontSize: 13, color: colors.muted, lineHeight: 18 },
   tiny: { fontSize: 11.5, color: colors.muted },
   mono: { fontFamily: 'monospace', fontSize: 13, color: colors.text },
 };
