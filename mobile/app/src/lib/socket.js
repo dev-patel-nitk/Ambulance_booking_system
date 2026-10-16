@@ -33,7 +33,7 @@ export function disconnectSocket() {
 /** Subscribes a component to a socket event and cleans up on unmount. */
 export function useSocketEvent(event, handler, deps = []) {
   useEffect(() => {
-    const s = socket;
+    const s = socket || connectSocket();
     if (!s) return undefined;
     s.on(event, handler);
     return () => s.off(event, handler);

@@ -175,7 +175,6 @@ export default function BookScreen({ navigation }) {
         <MapPanel
           markers={markers}
           height={240}
-          showSearch
           onPick={async (lat, lng, info) => {
             const coords = { latitude: Number(lat.toFixed(6)), longitude: Number(lng.toFixed(6)) };
             if (info && info.address) {

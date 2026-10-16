@@ -59,6 +59,11 @@ function NativeMap({
   // Injected JavaScript updates map state smoothly without destroying the DOM/Leaflet instance
   const inject = `window.applyState(${payload}); true;`;
 
+  // Real-time tracking: push state updates to the WebView as ambulance moves
+  useEffect(() => {
+    webRef.current?.injectJavaScript(`window.applyState(${payload}); true;`);
+  }, [payload]);
+
   return (
     <View style={[styles.wrap, { height }]}>
       <WebView
@@ -193,35 +198,30 @@ function buildHtml({
   }
   .clickable { pointer-events: auto; }
 
-  /* Style Switcher */
-  .style-switch {
-    top: 10px;
-    right: 10px;
-    display: flex;
-    gap: 4px;
-    background: rgba(15, 23, 42, 0.85);
+  /* Compact Style Switcher (no overlap) */
+  .style-cycle-btn {
+    top: 8px;
+    right: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(15, 23, 42, 0.9);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 20px;
-    padding: 3px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-  }
-  .style-btn {
-    border: none;
-    background: transparent;
-    color: #94a3b8;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 14px;
+    padding: 4px 9px;
+    color: #f8fafc;
     font-size: 11px;
     font-weight: 600;
-    padding: 4px 8px;
-    border-radius: 14px;
     cursor: pointer;
-    transition: all 0.15s ease;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.35);
+    z-index: 1000;
+    white-space: nowrap;
   }
-  .style-btn.active {
-    background: #2563eb;
-    color: #ffffff;
-    box-shadow: 0 2px 6px rgba(37,99,235,0.4);
+  .style-cycle-btn:active {
+    transform: scale(0.96);
+    background: rgba(30, 41, 59, 0.95);
   }
 
   /* OSRM Route HUD */
@@ -256,10 +256,11 @@ function buildHtml({
 
   /* Nominatim Search Bar */
   .search-container {
-    top: 10px;
-    left: 10px;
-    width: calc(100% - 130px);
-    max-width: 260px;
+    top: 8px;
+    left: 8px;
+    right: 105px;
+    max-width: 250px;
+    z-index: 1000;
   }
   .search-input-wrap {
     display: flex;
@@ -368,11 +369,10 @@ function buildHtml({
 <div id="map"></div>
 
 ${showStyleToggle ? `
-<div class="map-overlay-container style-switch clickable">
-  <button class="style-btn active" id="btn-streets" onclick="switchMapStyle('streets')">🗺️ Streets</button>
-  <button class="style-btn" id="btn-dark" onclick="switchMapStyle('dark')">🌙 Dark</button>
-  <button class="style-btn" id="btn-satellite" onclick="switchMapStyle('satellite')">🛰️ Satellite</button>
-</div>` : ''}
+<button id="style-cycle-btn" class="map-overlay-container style-cycle-btn clickable" onclick="cycleMapStyle()" title="Map Style">
+  <span id="style-icon">🗺️</span>
+  <span id="style-text">Streets</span>
+</button>` : ''}
 
 ${showSearch ? `
 <div class="map-overlay-container search-container clickable">
@@ -437,12 +437,27 @@ ${showRouteInfo ? `
     });
 
     tileLayer.addTo(map);
+    updateStyleButton(style);
+  }
 
-    // Update style buttons if present
-    ['streets', 'dark', 'satellite'].forEach(function(s) {
-      var btn = document.getElementById('btn-' + s);
-      if (btn) btn.className = (s === style) ? 'style-btn active' : 'style-btn';
-    });
+  var STYLES = [
+    { id: 'streets', label: 'Streets', icon: '🗺️' },
+    { id: 'dark', label: 'Dark', icon: '🌙' },
+    { id: 'satellite', label: 'Satellite', icon: '🛰️' }
+  ];
+
+  window.cycleMapStyle = function() {
+    var idx = STYLES.findIndex(function(s) { return s.id === currentStyle; });
+    var next = STYLES[(idx + 1) % STYLES.length];
+    setTileLayer(next.id);
+  };
+
+  function updateStyleButton(style) {
+    var cur = STYLES.find(function(s) { return s.id === style; }) || STYLES[0];
+    var iconEl = document.getElementById('style-icon');
+    var textEl = document.getElementById('style-text');
+    if (iconEl) iconEl.innerText = cur.icon;
+    if (textEl) textEl.innerText = cur.label;
   }
 
   window.switchMapStyle = function(style) {

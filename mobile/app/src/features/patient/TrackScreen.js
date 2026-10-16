@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Alert, Linking, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../../lib/api';
-import { getSocket, useResync, useSocketEvent } from '../../lib/socket';
+import { connectSocket, getSocket, useResync, useSocketEvent } from '../../lib/socket';
 import { MILESTONE_STEPS } from '../../lib/config';
 import { confirmAction } from '../../lib/confirm';
 import { STATUS_TEXT, colors, dateTimeOf, money, radius, spacing, typo } from '../../lib/theme';
@@ -19,7 +19,6 @@ export default function TrackScreen({ navigation }) {
   const [cancelling, setCancelling] = useState(false);
 
   const loadActive = useCallback(async () => {
-    setError('');
     try {
       const r = await api.get('/api/bookings/active');
       setBooking(r.booking);
@@ -36,34 +35,47 @@ export default function TrackScreen({ navigation }) {
     }
   }, []);
 
-  useFocusEffect(useCallback(() => { loadActive(); }, [loadActive]));
+  useFocusEffect(useCallback(() => {
+    connectSocket();
+    loadActive();
+  }, [loadActive]));
+
   useResync(loadActive, [loadActive]);
 
-  // Join the booking room so updates arrive without polling.
+  // Real-time heartbeat polling (every 3s while active): ensures tracking never freezes
+  const finished = Boolean(booking && ['COMPLETED', 'CANCELLED', 'FAILED'].includes(booking.booking_status));
   useEffect(() => {
-    const socket = getSocket();
-    if (!socket || !booking) return undefined;
+    if (!booking || finished) return undefined;
+    const interval = setInterval(() => {
+      loadActive();
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [booking?.booking_id, finished, loadActive]);
+
+  // Join the booking room so updates arrive via WebSockets
+  useEffect(() => {
+    const socket = getSocket() || connectSocket();
+    if (!socket || !booking?.booking_id) return undefined;
     socket.emit('booking:subscribe', booking.booking_id);
     return () => socket.emit('booking:unsubscribe', booking.booking_id);
   }, [booking?.booking_id]);
 
   useSocketEvent('booking:update', (b) => {
     setBooking(b);
-    if (['ASSIGNED', 'ENROUTE', 'ARRIVED', 'ONBOARD'].includes(b.booking_status)) loadActive();
+    loadActive();
   }, [loadActive]);
 
-  // Each GPS ping from the driver arrives here (F.8).
+  // Each GPS ping from the driver arrives here (F.8)
   useSocketEvent('trip:location', (p) => {
-    setTrack((prev) =>
-      prev
-        ? {
-            ...prev,
-            ambulance_location: { latitude: p.latitude, longitude: p.longitude, gps_timestamp: p.gps_timestamp },
-            trip: { ...prev.trip, eta_minutes: p.eta_minutes, route_distance_km: p.route_distance_km },
-          }
-        : prev
-    );
-  }, []);
+    if (p) {
+      setTrack((prev) => ({
+        ...(prev || {}),
+        ambulance_location: { latitude: p.latitude, longitude: p.longitude, gps_timestamp: p.gps_timestamp },
+        trip: { ...(prev?.trip || {}), eta_minutes: p.eta_minutes, route_distance_km: p.route_distance_km },
+      }));
+      loadActive();
+    }
+  }, [loadActive]);
 
   useSocketEvent('trip:status', () => loadActive(), [loadActive]);
 
