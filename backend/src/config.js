@@ -100,7 +100,7 @@ const config = {
     secure: bool(process.env.EMAIL_SECURE, false),
     user: process.env.EMAIL_USER || '',
     pass: process.env.EMAIL_PASS || '',
-    from: process.env.EMAIL_FROM || 'Ambulance Booking System <no-reply@nitk.ac.in>',
+    from: process.env.EMAIL_FROM || 'Ambulance Booking System <mr.cool0631@gmail.com>',
   },
 
   maps: {
