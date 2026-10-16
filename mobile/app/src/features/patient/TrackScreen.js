@@ -109,7 +109,6 @@ export default function TrackScreen({ navigation }) {
   }
 
   const searching = ['REQUESTED', 'MATCHING'].includes(booking.booking_status);
-  const finished = ['COMPLETED', 'CANCELLED', 'FAILED'].includes(booking.booking_status);
   const currentIndex = MILESTONE_STEPS.findIndex((s) => s.code === (booking.trip?.trip_milestone || 'ASSIGNED'));
 
   const markers = [
