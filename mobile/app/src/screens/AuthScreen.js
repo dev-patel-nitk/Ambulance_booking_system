@@ -1,26 +1,24 @@
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../lib/auth';
+import { api } from '../lib/api';
 import { ROLES, roleFor } from '../lib/config';
-import { Banner, Body, Button, Card, Field, H1, H2, Small, PasswordStrengthMeter } from '../components/ui';
+import { Banner, Body, Button, Card, Field, H1, H2, Small } from '../components/ui';
 import BackendSetting from '../components/BackendSetting';
+import PasswordStrength from '../components/PasswordStrength';
 import { colors, radius, spacing, typo } from '../lib/theme';
 
 /**
  * F.1 Registration and authentication, F.2 role-based login.
- * Digital Brand Identity Manual (DBIM) compliant.
- * Features:
- * - Direct password sign-in for registered users (with email OTP fallback)
- * - Registration with email OTP verification + mandatory password + live strength meter
- * - Forgot password with email reset link/token and instant in-app reset
+ *
+ * The SRS asks for the mode to be selected at sign-in, so the screen opens on
+ * the picker rather than on a form: you say who you are first, and the chosen
+ * mode is then checked against the account the credentials belong to.
  */
-const MODES = {
-  SIGN_IN: 'SIGN_IN',
-  SIGN_IN_OTP: 'SIGN_IN_OTP',
-  REGISTER: 'REGISTER',
-  FORGOT: 'FORGOT',
-};
+const MODES = { SIGN_IN: 'SIGN_IN', REGISTER: 'REGISTER', OTP: 'OTP', FORGOT: 'FORGOT' };
 
+// Only the two self-service roles can create their own account. A control-room
+// login is made by another administrator (F.13), never from the sign-in screen.
 const REGISTRABLE = {
   PATIENT: [{ code: 'USER', label: 'Patient', hint: 'Book ambulances for yourself or family' }],
   PROVIDER: [
@@ -30,44 +28,33 @@ const REGISTRABLE = {
 };
 
 export default function AuthScreen() {
-  const { signIn, register, requestOtp, verifyOtp, forgotPassword, resetPassword } = useAuth();
+  const { signIn, startRegistration, requestOtp, verifyOtp, forgotPassword, resetPassword } = useAuth();
 
   const [roleKey, setRoleKey] = useState(null);
   const [mode, setMode] = useState(MODES.SIGN_IN);
   const [form, setForm] = useState({
-    full_name: '',
-    phone_no: '',
-    email_id: '',
-    password: '',
-    confirm_password: '',
-  });
-  const [resetForm, setResetForm] = useState({
-    email_id: '',
-    token: '',
-    new_password: '',
-    confirm_password: '',
-    sent: false,
-    successMessage: '',
+    full_name: '', phone_no: '', email_id: '', identity: '', password: '',
   });
   const [regRole, setRegRole] = useState('USER');
-  const [otp, setOtp] = useState({ sent: false, code: '', devCode: '', destination: '', fallbackMessage: '' });
+  const [otp, setOtp] = useState({ sent: false, code: '', devCode: '' });
   const [error, setError] = useState('');
-  const [infoMessage, setInfoMessage] = useState('');
+  const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
+  // `api.url` is a getter on a module, so changing it does not re-render on its
+  // own. Bumping this is what redraws the screens that display the address.
   const [, setBackendNonce] = useState(0);
 
   const role = roleFor(roleKey);
   const set = (k) => (v) => setForm((f) => ({ ...f, [k]: v }));
-  const setReset = (k) => (v) => setResetForm((f) => ({ ...f, [k]: v }));
 
   async function run(fn) {
     setError('');
-    setInfoMessage('');
+    setNotice('');
     setBusy(true);
     try {
       await fn();
     } catch (e) {
-      setError(e.message || 'An unexpected error occurred');
+      setError(e.message);
     } finally {
       setBusy(false);
     }
@@ -77,12 +64,11 @@ export default function AuthScreen() {
     setRoleKey(key);
     setMode(MODES.SIGN_IN);
     setError('');
-    setInfoMessage('');
-    setOtp({ sent: false, code: '', devCode: '', destination: '', fallbackMessage: '' });
+    setOtp({ sent: false, code: '', devCode: '' });
     setRegRole(REGISTRABLE[key]?.[0]?.code || 'USER');
   }
 
-  // ------------------------------------------------------- Role picker
+  // ------------------------------------------------------- the role picker
   if (!role) {
     return (
       <ScrollView
@@ -91,163 +77,123 @@ export default function AuthScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.hero}>
-          <View style={styles.iconCircle}>
-            <Text style={{ fontSize: 44 }}>🚑</Text>
-          </View>
-          <H1 style={{ marginTop: spacing.md, textAlign: 'center' }}>Ambulance Booking</H1>
-          <Small style={{ textAlign: 'center', marginTop: 4, color: colors.muted }}>
-            Emergency Care & Rapid Response System
+          <Text style={{ fontSize: 52 }}>🚑</Text>
+          <H1 style={{ marginTop: spacing.sm, textAlign: 'center' }}>Ambulance Booking</H1>
+          <Small style={{ textAlign: 'center', marginTop: 4 }}>
+            Choose how you are signing in
           </Small>
         </View>
 
-        <Text style={[typo.small, { fontWeight: '700', marginBottom: spacing.sm, textTransform: 'uppercase', letterSpacing: 0.5 }]}>
-          Select Sign-In Portal
-        </Text>
-
         {ROLES.map((r) => (
           <Pressable key={r.key} onPress={() => chooseRole(r.key)} style={styles.roleCard}>
-            <View style={styles.roleIconWrap}>
-              <Text style={{ fontSize: 28 }}>{r.icon}</Text>
-            </View>
+            <Text style={{ fontSize: 32 }}>{r.icon}</Text>
             <View style={{ flex: 1 }}>
               <Body style={{ fontWeight: '700', fontSize: 16 }}>{r.title}</Body>
               <Small>{r.subtitle}</Small>
             </View>
-            <Text style={{ color: colors.muted, fontSize: 24 }}>›</Text>
+            <Text style={{ color: colors.muted, fontSize: 22 }}>›</Text>
           </Pressable>
         ))}
 
         <View style={{ marginTop: spacing.lg }}>
           <BackendSetting onChange={() => setBackendNonce((n) => n + 1)} />
         </View>
-
-        <View style={styles.emergencyBanner}>
-          <Text style={{ fontSize: 16, marginRight: 8 }}>🚨</Text>
-          <Body style={[typo.tiny, { color: colors.warn, fontWeight: '600', flex: 1 }]}>
-            In life-threatening medical emergencies, dial 108 directly.
-          </Body>
-        </View>
+        <Body style={[typo.tiny, styles.emergency]}>
+          In a life-threatening emergency also call 108 directly.
+        </Body>
       </ScrollView>
     );
   }
 
-  // ---------------------------------------------------- Auth forms
+  // ---------------------------------------------------- credentials for it
   const canRegister = Boolean(REGISTRABLE[roleKey]);
   const roleOptions = REGISTRABLE[roleKey] || [];
-  const isAdmin = roleKey === 'ADMIN';
 
-  // 1. Password sign-in
-  const submitPasswordSignIn = () =>
-    run(async () => {
-      const email = form.email_id.trim();
-      if (!email) throw new Error('Please enter your email address');
-      if (!form.password) throw new Error('Please enter your password');
-      await signIn(roleKey, email, form.password);
-    });
+  // One field, either identifier. `identity` holds whichever was typed; the
+  // client decides from the shape of it which one the server is being told.
+  const submitSignIn = () => run(() => signIn(roleKey, form.identity.trim(), form.password));
 
-  // 2. OTP sign-in (fallback)
-  const sendSignInOtp = () =>
-    run(async () => {
-      const email = form.email_id.trim();
-      if (!email || !email.includes('@')) throw new Error('Please enter your email address');
-      const r = await requestOtp(email, 'LOGIN');
-      setOtp({
-        sent: true,
-        code: r.otp_code || '',
-        devCode: r.otp_code || '',
-        destination: r.destination || email,
-        fallbackMessage: r.otp_code && r.delivery_status === 'FALLBACK' ? r.message : '',
-      });
-      setInfoMessage(`Verification code sent to ${r.destination || email}`);
-    });
-
-  const submitSignInOtp = () =>
-    run(async () => {
-      const email = form.email_id.trim();
-      if (!otp.code.trim()) throw new Error('Please enter the 6-digit verification code');
-      await verifyOtp(roleKey, email, otp.code.trim());
-    });
-
-  // 3. Registration: send OTP then verify + password
-  const sendRegisterOtp = () =>
-    run(async () => {
-      if (!form.full_name.trim()) throw new Error('Please enter your full name');
-      const email = form.email_id.trim();
-      if (!email || !email.includes('@')) throw new Error('Please enter a valid email address');
-      const r = await requestOtp(email, 'REGISTER', { phone_no: form.phone_no.trim() });
-      setOtp({
-        sent: true,
-        code: r.otp_code || '',
-        devCode: r.otp_code || '',
-        destination: r.destination || email,
-        fallbackMessage: r.otp_code && r.delivery_status === 'FALLBACK' ? r.message : '',
-      });
-      setInfoMessage(`Verification code sent to ${r.destination || email}. Enter it below with your new password.`);
-    });
-
+  /**
+   * Registering is two steps, because the address has to be proved before the
+   * account exists. This is the first: the server checks the details and
+   * emails a code. `completeRegistration` is the second.
+   */
   const submitRegister = () =>
     run(async () => {
-      const email = form.email_id.trim();
-      if (!otp.code.trim()) throw new Error('Please enter the 6-digit verification code sent to your email');
-      if (!form.password) throw new Error('Please set a password for your account');
-      if (form.password.length < 6) throw new Error('Password must be at least 6 characters');
-      if (form.confirm_password && form.password !== form.confirm_password) {
-        throw new Error('Passwords do not match');
-      }
-
-      await register(roleKey, {
+      const r = await startRegistration({
         full_name: form.full_name.trim(),
-        email_id: email,
-        phone_no: form.phone_no.trim() || undefined,
+        phone_no: form.phone_no.trim(),
+        email_id: form.email_id.trim(),
         password: form.password,
         role_code: regRole,
-        otp_code: otp.code.trim(),
       });
+      setOtp({ sent: true, code: '', devCode: r.otp_code || '', sentTo: r.sent_to, channel: r.channel });
     });
 
-  // 4. Forgot password flow
-  const submitForgotPassword = () =>
+  /** Forgotten password, step one: a code to the address. */
+  const sendReset = () =>
     run(async () => {
-      const email = (resetForm.email_id || form.email_id).trim();
-      if (!email || !email.includes('@')) throw new Error('Please enter your account email address');
-      const res = await forgotPassword(email);
-      setResetForm((f) => ({
-        ...f,
-        sent: true,
-        email_id: email,
-        token: res.reset_token || '',
-        successMessage: res.message || 'Reset code sent to your email.',
-      }));
-      setInfoMessage('Check your email for the reset code or link');
+      const r = await forgotPassword(form.email_id.trim());
+      setOtp({ sent: true, code: '', devCode: r.otp_code || '', sentTo: r.sent_to, channel: 'EMAIL' });
+      setNotice(r.message);
     });
 
-  const submitResetPassword = () =>
+  /** Step two: the code and a new password. Every session is then revoked. */
+  const submitReset = () =>
     run(async () => {
-      if (!resetForm.token.trim()) throw new Error('Please enter the reset code from your email');
-      if (!resetForm.new_password) throw new Error('Please enter your new password');
-      if (resetForm.new_password.length < 6) throw new Error('Password must be at least 6 characters');
-      if (resetForm.confirm_password && resetForm.new_password !== resetForm.confirm_password) {
-        throw new Error('Passwords do not match');
-      }
-
-      const res = await resetPassword(resetForm.token.trim(), resetForm.new_password);
-      setInfoMessage(res.message || 'Password reset successful! Please sign in with your new password.');
-      setForm((f) => ({ ...f, email_id: resetForm.email_id, password: resetForm.new_password }));
+      const r = await resetPassword(form.email_id.trim(), otp.code.trim(), form.password);
       setMode(MODES.SIGN_IN);
-      setResetForm({ email_id: '', token: '', new_password: '', confirm_password: '', sent: false, successMessage: '' });
+      setOtp({ sent: false, code: '', devCode: '' });
+      setForm((f) => ({ ...f, password: '', identity: f.email_id }));
+      setNotice(r.message);
     });
 
-  function switchTab(m) {
-    setMode(m);
-    setError('');
-    setInfoMessage('');
-    setOtp({ sent: false, code: '', devCode: '', destination: '', fallbackMessage: '' });
-  }
+  /** The second step: the code comes back, and the account is created. */
+  const completeRegistration = () =>
+    run(() =>
+      verifyOtp(roleKey, form.email_id.trim(), otp.code.trim(), {
+        full_name: form.full_name.trim(),
+        phone_no: form.phone_no.trim(),
+        password: form.password,
+        role_code: regRole,
+      })
+    );
 
-  const tabs = [
-    [MODES.SIGN_IN, 'Sign In'],
-    ...(canRegister ? [[MODES.REGISTER, 'Register']] : []),
-  ];
+  const sendOtp = () =>
+    run(async () => {
+      const r = await requestOtp(form.email_id.trim());
+      setOtp({ sent: true, code: '', devCode: r.otp_code || '', sentTo: r.sent_to, channel: r.channel });
+    });
+
+  /**
+   * A correct code on a number with no account registers it, so the server may
+   * come back asking for a name. Rather than treat that as an error, show the
+   * field and let them finish — the code they just proved is still good.
+   */
+  const submitOtp = () =>
+    run(async () => {
+      try {
+        await verifyOtp(roleKey, form.email_id.trim(), otp.code.trim(), {
+          full_name: form.full_name.trim() || undefined,
+          phone_no: form.phone_no.trim() || undefined,
+        });
+      } catch (e) {
+        if (e.payload?.needs_registration) {
+          if (!canRegister) {
+            // F.13: a control-room account is made by another administrator,
+            // never by proving you hold a phone number.
+            throw new Error('No control-room account uses this number. An administrator has to create one for you.');
+          }
+          setOtp((o) => ({ ...o, needsName: true, missing: e.payload.missing || [] }));
+          throw new Error('This address is new here. Enter your name and mobile number to create an account.');
+        }
+        throw e;
+      }
+    });
+
+  const tabs = [[MODES.SIGN_IN, 'Sign in']]
+    .concat(canRegister ? [[MODES.REGISTER, 'Register']] : [])
+    .concat([[MODES.OTP, 'OTP']]);
 
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.bg }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -256,313 +202,296 @@ export default function AuthScreen() {
         contentContainerStyle={styles.container}
         keyboardShouldPersistTaps="handled"
       >
-        <Pressable onPress={() => { setRoleKey(null); setError(''); setInfoMessage(''); }} style={styles.back}>
-          <Text style={{ color: colors.accent, fontSize: 14.5, fontWeight: '600' }}>‹  Change Mode</Text>
+        <Pressable onPress={() => { setRoleKey(null); setError(''); }} style={styles.back}>
+          <Text style={{ color: colors.accent, fontSize: 14.5 }}>‹  Change mode</Text>
         </Pressable>
 
-        <View style={[styles.hero, { marginBottom: spacing.md }]}>
-          <View style={styles.iconCircleSmall}>
-            <Text style={{ fontSize: 32 }}>{role.icon}</Text>
-          </View>
+        <View style={[styles.hero, { marginBottom: spacing.lg }]}>
+          <Text style={{ fontSize: 44 }}>{role.icon}</Text>
           <H2 style={{ marginTop: spacing.sm, textAlign: 'center' }}>{role.title}</H2>
-          <Small style={{ textAlign: 'center', marginTop: 2, color: colors.muted }}>{role.subtitle}</Small>
+          <Small style={{ textAlign: 'center', marginTop: 2 }}>{role.subtitle}</Small>
         </View>
 
-        {mode !== MODES.FORGOT && (
-          <View style={styles.tabs}>
-            {tabs.map(([m, label]) => (
-              <Pressable
-                key={m}
-                onPress={() => switchTab(m)}
-                style={[styles.tab, (mode === m || (m === MODES.SIGN_IN && mode === MODES.SIGN_IN_OTP)) && styles.tabActive]}
-              >
-                <Text
-                  style={{
-                    color: (mode === m || (m === MODES.SIGN_IN && mode === MODES.SIGN_IN_OTP)) ? colors.white : colors.muted,
-                    fontWeight: '700',
-                    fontSize: 14,
-                  }}
-                >
-                  {label}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        )}
+        <View style={styles.tabs}>
+          {tabs.map(([m, label]) => (
+            <Pressable
+              key={m}
+              // Clearing the code too: a half-finished registration must not
+              // follow you to the sign-in form, where its field means nothing.
+              onPress={() => {
+                setMode(m);
+                setError('');
+                setOtp({ sent: false, code: '', devCode: '' });
+              }}
+              style={[styles.tab, mode === m && styles.tabActive]}
+            >
+              <Text style={{ color: mode === m ? colors.white : colors.muted, fontWeight: '600', fontSize: 13.5 }}>
+                {label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
 
         <Card>
           <Banner kind="error">{error}</Banner>
-          {infoMessage ? <Banner kind="info">{infoMessage}</Banner> : null}
+          {notice ? <Banner kind="info">{notice}</Banner> : null}
 
-          {/* ======================= FORGOT PASSWORD MODE ======================= */}
-          {mode === MODES.FORGOT && (
-            <View>
-              <H2 style={{ marginBottom: 4, fontSize: 18 }}>Reset Password</H2>
-              <Small style={{ marginBottom: spacing.md }}>
-                Enter your registered email to receive a password reset link and verification code.
-              </Small>
-
-              <Field
-                label="Registered Email Address"
-                value={resetForm.email_id || form.email_id}
-                onChangeText={setReset('email_id')}
-                placeholder="yourname@gmail.com"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                editable={!resetForm.sent}
-              />
-
-              {resetForm.sent && (
-                <>
-                  <Banner kind="warn">
-                    {resetForm.successMessage || 'Verification code sent to your email.'}
-                  </Banner>
-
-                  <Field
-                    label="Reset Code / Token (from email)"
-                    value={resetForm.token}
-                    onChangeText={setReset('token')}
-                    placeholder="Enter reset code"
-                    autoCapitalize="none"
-                  />
-
-                  <Field
-                    label="New Password"
-                    value={resetForm.new_password}
-                    onChangeText={setReset('new_password')}
-                    placeholder="Enter at least 6 characters"
-                    secureTextEntry
-                  />
-
-                  <PasswordStrengthMeter password={resetForm.new_password} />
-
-                  <Field
-                    label="Confirm New Password"
-                    value={resetForm.confirm_password}
-                    onChangeText={setReset('confirm_password')}
-                    placeholder="Re-enter new password"
-                    secureTextEntry
-                  />
-
-                  <Button title="Update Password & Sign In" onPress={submitResetPassword} loading={busy} />
-                </>
-              )}
-
-              {!resetForm.sent && (
-                <Button title="Send Reset Link to Email" onPress={submitForgotPassword} loading={busy} />
-              )}
-
-              <View style={{ marginTop: spacing.md, alignItems: 'center' }}>
-                <Pressable onPress={() => { setMode(MODES.SIGN_IN); setError(''); setInfoMessage(''); }}>
-                  <Text style={{ color: colors.accent, fontSize: 14, fontWeight: '600' }}>‹ Back to Sign In</Text>
-                </Pressable>
+          {mode === MODES.REGISTER && roleOptions.length > 1 && (
+            <>
+              <Text style={[typo.small, { marginBottom: 6 }]}>I am registering as</Text>
+              <View style={{ gap: spacing.sm, marginBottom: spacing.md }}>
+                {roleOptions.map((o) => (
+                  <Pressable
+                    key={o.code}
+                    onPress={() => setRegRole(o.code)}
+                    style={[styles.optionCard, regRole === o.code && styles.optionCardActive]}
+                  >
+                    <Body style={{ fontWeight: '700' }}>{o.label}</Body>
+                    <Small>{o.hint}</Small>
+                  </Pressable>
+                ))}
               </View>
-            </View>
+            </>
           )}
 
-          {/* ======================= SIGN IN (PASSWORD) ======================= */}
-          {mode === MODES.SIGN_IN && (
-            <View>
-              <Field
-                label="Email Address"
-                value={form.email_id}
-                onChangeText={set('email_id')}
-                placeholder="yourname@gmail.com"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
+          {mode === MODES.REGISTER && (
+            <Field
+              label="Full name"
+              value={form.full_name}
+              onChangeText={set('full_name')}
+              placeholder="Your name"
+              autoCapitalize="words"
+            />
+          )}
 
+          {/*
+            The OTP tab asks only for an address. A code proves one contact
+            detail, and an address is the one that can be proved for nothing -
+            so demanding a mobile number before sending an email would be
+            asking for something this step has no use for.
+          */}
+          {mode === MODES.FORGOT || mode === MODES.OTP ? (
+            <Field
+              label="Email address"
+              value={form.email_id}
+              onChangeText={set('email_id')}
+              placeholder="you@example.com"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoComplete="email"
+              hint={
+                otp.sent ? undefined
+                : mode === MODES.FORGOT ? 'We will email a reset code to this address.'
+                : 'We will email you a 6-digit code.'
+              }
+            />
+          ) : mode === MODES.SIGN_IN ? (
+            <Field
+              label="Email or mobile number"
+              value={form.identity}
+              onChangeText={set('identity')}
+              placeholder="you@example.com or 10-digit number"
+              autoCapitalize="none"
+              autoComplete="username"
+            />
+          ) : (
+            <Field
+              label="Mobile number"
+              value={form.phone_no}
+              onChangeText={set('phone_no')}
+              placeholder="10-digit mobile number"
+              keyboardType="number-pad"
+              maxLength={10}
+              hint="The ambulance crew call this if they cannot find you."
+            />
+          )}
+
+          {mode === MODES.REGISTER && (
+            <Field
+              label="Email address"
+              value={form.email_id}
+              onChangeText={set('email_id')}
+              placeholder="you@example.com"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoComplete="email"
+            />
+          )}
+
+          {/*
+            Hidden once a registration code is outstanding: the password has
+            already been accepted and is carried through with the code, so
+            leaving the field on screen would invite someone to change it
+            between the two halves of one request.
+          */}
+          {(mode === MODES.FORGOT ? otp.sent : mode !== MODES.OTP && !otp.sent) && (
+            <>
               <Field
-                label="Password"
+                label={mode === MODES.FORGOT ? 'New password' : 'Password'}
                 value={form.password}
                 onChangeText={set('password')}
-                placeholder="Enter your password"
+                placeholder={mode === MODES.SIGN_IN ? 'Your password' : 'At least 8 characters'}
                 secureTextEntry
               />
-
-              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: -spacing.sm, marginBottom: spacing.md }}>
-                <Pressable onPress={() => { setMode(MODES.FORGOT); setError(''); setInfoMessage(''); setResetForm((f) => ({ ...f, email_id: form.email_id })); }}>
-                  <Text style={{ color: colors.info, fontSize: 13, fontWeight: '600' }}>Forgot password?</Text>
-                </Pressable>
-              </View>
-
-              <Button title="Sign In" onPress={submitPasswordSignIn} loading={busy} />
-
-              {!isAdmin && (
-                <View style={{ marginTop: spacing.md, borderTopWidth: 1, borderColor: colors.line, paddingTop: spacing.md }}>
-                  <Button
-                    title="Sign in with Email OTP instead"
-                    variant="ghost"
-                    onPress={() => { setMode(MODES.SIGN_IN_OTP); setError(''); setInfoMessage(''); }}
-                  />
-                </View>
-              )}
-            </View>
+              {/*
+                Only while choosing one. On the sign-in form the password is
+                being supplied, not chosen, and grading an existing password
+                there would be both useless and rude.
+              */}
+              {mode !== MODES.SIGN_IN ? (
+                <PasswordStrength
+                  value={form.password}
+                  owner={{
+                    full_name: form.full_name,
+                    phone_no: form.phone_no,
+                    email_id: form.email_id,
+                  }}
+                />
+              ) : null}
+            </>
           )}
 
-          {/* ======================= SIGN IN (EMAIL OTP FALLBACK) ======================= */}
-          {mode === MODES.SIGN_IN_OTP && (
-            <View>
+          {/*
+            Registering and signing in by code both end here, because both
+            have to prove the address before anything happens.
+          */}
+          {otp.sent && (
+            <>
               <Field
-                label="Email Address"
-                value={form.email_id}
-                onChangeText={set('email_id')}
-                placeholder="yourname@gmail.com"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!otp.sent}
-                hint={!otp.sent ? "We'll send a 6-digit verification code to your email." : undefined}
-              />
-
-              {otp.sent && (
-                <>
-                  {otp.fallbackMessage ? (
-                    <Banner kind="warn">{otp.fallbackMessage}</Banner>
-                  ) : (
-                    <Banner kind="warn">
-                      Verification code sent to {otp.destination || form.email_id}. Check your inbox or spam folder.
-                    </Banner>
-                  )}
-                  <Field
-                    label="6-Digit Verification Code"
-                    value={otp.code}
-                    onChangeText={(v) => setOtp((o) => ({ ...o, code: v }))}
-                    placeholder="123456"
-                    keyboardType="number-pad"
-                    maxLength={6}
-                  />
-                  <View style={{ gap: spacing.sm }}>
-                    <Button title="Verify & Sign In" onPress={submitSignInOtp} loading={busy} />
-                    <Button title="Resend Code" variant="ghost" onPress={sendSignInOtp} />
-                  </View>
-                </>
-              )}
-
-              {!otp.sent && (
-                <Button title="Send Verification Code" onPress={sendSignInOtp} loading={busy} />
-              )}
-
-              <View style={{ marginTop: spacing.md, alignItems: 'center' }}>
-                <Pressable onPress={() => { setMode(MODES.SIGN_IN); setError(''); setInfoMessage(''); }}>
-                  <Text style={{ color: colors.accent, fontSize: 13, fontWeight: '600' }}>‹ Use Password instead</Text>
-                </Pressable>
-              </View>
-            </View>
-          )}
-
-          {/* ======================= REGISTER (OTP + PASSWORD) ======================= */}
-          {mode === MODES.REGISTER && (
-            <View>
-              {roleOptions.length > 1 && (
-                <>
-                  <Text style={[typo.small, { marginBottom: 6, fontWeight: '600' }]}>I am registering as</Text>
-                  <View style={{ gap: spacing.sm, marginBottom: spacing.md }}>
-                    {roleOptions.map((o) => (
-                      <Pressable
-                        key={o.code}
-                        onPress={() => !otp.sent && setRegRole(o.code)}
-                        style={[styles.optionCard, regRole === o.code && styles.optionCardActive]}
-                      >
-                        <Body style={{ fontWeight: '700' }}>{o.label}</Body>
-                        <Small>{o.hint}</Small>
-                      </Pressable>
-                    ))}
-                  </View>
-                </>
-              )}
-
-              <Field
-                label="Full Name"
-                value={form.full_name}
-                onChangeText={set('full_name')}
-                placeholder="Full Name"
-                autoCapitalize="words"
-                editable={!otp.sent}
-              />
-
-              <Field
-                label="Email Address"
-                value={form.email_id}
-                onChangeText={set('email_id')}
-                placeholder="yourname@gmail.com"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!otp.sent}
-                hint={!otp.sent ? "A verification code will be sent to this email" : undefined}
-              />
-
-              <Field
-                label="Mobile Number (optional)"
-                value={form.phone_no}
-                onChangeText={set('phone_no')}
-                placeholder="10-digit mobile number"
+                label="Verification code"
+                value={otp.code}
+                onChangeText={(v) => setOtp((o) => ({ ...o, code: v }))}
+                placeholder="6-digit code"
                 keyboardType="number-pad"
-                maxLength={10}
-                editable={!otp.sent}
+                maxLength={6}
               />
-
-              {otp.sent ? (
+              {/*
+                The address checked out but belongs to nobody yet, so this is
+                a sign-up. The number is asked for here rather than up front
+                because it plays no part in proving the address - it is what
+                the ambulance crew ring when they cannot find the patient.
+              */}
+              {/*
+                Only the OTP tab ever reaches this: the registration form
+                collected a name and a number up front, so asking again there
+                would be asking twice for the same thing.
+              */}
+              {mode === MODES.OTP && otp.needsName ? (
                 <>
-                  <Banner kind="warn">
-                    Enter the 6-digit code sent to {otp.destination || form.email_id} and create your password.
-                  </Banner>
-
                   <Field
-                    label="6-Digit Email Verification Code"
-                    value={otp.code}
-                    onChangeText={(v) => setOtp((o) => ({ ...o, code: v }))}
-                    placeholder="123456"
+                    label="Your name"
+                    value={form.full_name}
+                    onChangeText={set('full_name')}
+                    placeholder="Your name"
+                    autoCapitalize="words"
+                    hint="This email has no account yet, so this creates one."
+                  />
+                  <Field
+                    label="Mobile number"
+                    value={form.phone_no}
+                    onChangeText={set('phone_no')}
+                    placeholder="10-digit mobile number"
                     keyboardType="number-pad"
-                    maxLength={6}
+                    maxLength={10}
+                    hint="The ambulance crew call this if they cannot find you."
                   />
-
-                  <Field
-                    label="Create Password"
-                    value={form.password}
-                    onChangeText={set('password')}
-                    placeholder="Min 6 chars (stronger recommended)"
-                    secureTextEntry
-                  />
-
-                  <PasswordStrengthMeter password={form.password} />
-
-                  <Field
-                    label="Confirm Password"
-                    value={form.confirm_password}
-                    onChangeText={set('confirm_password')}
-                    placeholder="Re-enter password"
-                    secureTextEntry
-                  />
-
-                  <View style={{ gap: spacing.sm, marginTop: spacing.sm }}>
-                    <Button title="Verify Code & Create Account" onPress={submitRegister} loading={busy} />
-                    <Button title="Resend Verification Code" variant="ghost" onPress={sendRegisterOtp} />
-                    <Button
-                      title="Change Details"
-                      variant="ghost"
-                      onPress={() => setOtp({ sent: false, code: '', devCode: '', destination: '', fallbackMessage: '' })}
-                    />
-                  </View>
                 </>
-              ) : (
-                <Button title="Send Verification Code to Email" onPress={sendRegisterOtp} loading={busy} />
-              )}
-            </View>
+              ) : null}
+
+              {otp.sentTo ? (
+                <Small style={{ marginBottom: spacing.sm }}>
+                  Sent to {otp.sentTo} by {otp.channel === 'EMAIL' ? 'email' : 'WhatsApp'}.
+                </Small>
+              ) : null}
+
+              {otp.devCode ? (
+                <Banner kind="warn">
+                  Development mode: your code is {otp.devCode}. With a transport configured it
+                  arrives {otp.channel === 'EMAIL' ? 'by email' : 'by WhatsApp or SMS'} instead.
+                </Banner>
+              ) : null}
+            </>
+          )}
+
+          {mode === MODES.SIGN_IN && (
+            <>
+              <Button title="Sign in" onPress={submitSignIn} loading={busy} />
+              <Button
+                title="Forgot password?"
+                variant="ghost"
+                style={{ marginTop: spacing.sm }}
+                onPress={() => {
+                  setMode(MODES.FORGOT);
+                  setError('');
+                  setNotice('');
+                  setOtp({ sent: false, code: '', devCode: '' });
+                  // Carry whatever they typed, if it looks like an address.
+                  setForm((f) => ({
+                    ...f,
+                    email_id: f.identity.includes('@') ? f.identity : f.email_id,
+                  }));
+                }}
+              />
+            </>
+          )}
+
+          {mode === MODES.FORGOT && (
+            <>
+              <Button
+                title={otp.sent ? 'Set new password' : 'Email me a reset code'}
+                onPress={otp.sent ? submitReset : sendReset}
+                loading={busy}
+              />
+              <Button
+                title={otp.sent ? 'Send a new code' : 'Back to sign in'}
+                variant="ghost"
+                style={{ marginTop: spacing.sm }}
+                onPress={() => {
+                  if (otp.sent) return sendReset();
+                  setMode(MODES.SIGN_IN);
+                  setError('');
+                  setNotice('');
+                  return undefined;
+                }}
+              />
+            </>
+          )}
+          {mode === MODES.REGISTER && (
+            <Button
+              title={otp.sent ? 'Verify and create account' : 'Email me a code'}
+              onPress={otp.sent ? completeRegistration : submitRegister}
+              loading={busy}
+            />
+          )}
+          {mode === MODES.REGISTER && otp.sent ? (
+            <Button
+              title="Send a new code"
+              variant="ghost"
+              style={{ marginTop: spacing.sm }}
+              onPress={submitRegister}
+            />
+          ) : null}
+          {mode === MODES.OTP && (
+            <Button
+              title={otp.sent ? 'Verify and continue' : 'Send code'}
+              onPress={otp.sent ? submitOtp : sendOtp}
+              loading={busy}
+            />
+          )}
+
+          {mode === MODES.OTP && otp.sent && (
+            <Button title="Send a new code" variant="ghost" onPress={sendOtp} style={{ marginTop: spacing.sm }} />
           )}
         </Card>
 
         {!canRegister ? (
-          <Small style={{ textAlign: 'center', lineHeight: 18, color: colors.muted }}>
-            Control-room administrator accounts are provisioned securely by central management.
+          <Small style={{ textAlign: 'center', lineHeight: 18 }}>
+            Control-room accounts are created by another administrator, not from
+            this screen.
           </Small>
         ) : null}
 
-        <Small style={{ textAlign: 'center', marginTop: spacing.md, color: colors.muted }}>
-          Demo Account: {role.demo}
-        </Small>
+        <Small style={{ textAlign: 'center', marginTop: spacing.md }}>Demo account {role.demo}</Small>
         <BackendSetting onChange={() => setBackendNonce((n) => n + 1)} />
       </ScrollView>
     </KeyboardAvoidingView>
@@ -570,82 +499,38 @@ export default function AuthScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { padding: spacing.lg, paddingTop: spacing.xl * 1.5, paddingBottom: spacing.xl },
+  container: { padding: spacing.lg, paddingTop: spacing.xl * 2, paddingBottom: spacing.xl },
   hero: { alignItems: 'center', marginBottom: spacing.xl },
-  iconCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: `${colors.accent}14`,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: `${colors.accent}33`,
-  },
-  iconCircleSmall: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: `${colors.accent}14`,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: `${colors.accent}33`,
-  },
   back: { marginBottom: spacing.md },
   roleCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-    padding: spacing.md + 2,
+    padding: spacing.lg,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    marginBottom: spacing.md,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 1,
-  },
-  roleIconWrap: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    borderColor: colors.line,
     backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
+    marginBottom: spacing.md,
   },
   tabs: {
     flexDirection: 'row',
     backgroundColor: colors.surface,
-    borderRadius: radius.sm,
-    padding: 3,
+    borderRadius: 10,
+    padding: 4,
     marginBottom: spacing.md,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.line,
   },
-  tab: { flex: 1, paddingVertical: 11, borderRadius: radius.sm - 2, alignItems: 'center' },
+  tab: { flex: 1, paddingVertical: 10, borderRadius: 7, alignItems: 'center' },
   tabActive: { backgroundColor: colors.accent },
   optionCard: {
     padding: spacing.md,
     borderRadius: radius.sm,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.line,
     backgroundColor: colors.bg,
   },
-  optionCardActive: { borderColor: colors.accent, backgroundColor: `${colors.accent}10` },
-  emergencyBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFBEB',
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-    borderRadius: radius.sm,
-    padding: spacing.md,
-    marginTop: spacing.lg,
-  },
+  optionCardActive: { borderColor: colors.accent, backgroundColor: `${colors.accent}14` },
+  emergency: { textAlign: 'center', marginTop: spacing.lg, color: colors.warn },
 });

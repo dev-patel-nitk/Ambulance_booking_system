@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { api, clearToken, loadBaseUrl, loadToken, saveToken, setUnauthorizedHandler } from './api';
+import { registerForPush, unregisterPush } from './push';
 import { connectSocket, disconnectSocket } from './socket';
 import { modeForRoleCode, roleFor } from './config';
 
@@ -27,23 +28,28 @@ export function AuthProvider({ children }) {
     });
 
     (async () => {
-      // The stored backend address has to be in place before the first
-      // request, otherwise boot would talk to the compiled-in default.
-      await loadBaseUrl();
-
-      const token = await loadToken();
-      if (!token) {
-        setBooting(false);
-        return;
-      }
+      // One try/finally around the whole thing. `booting` gates the entire
+      // app behind a "Starting up..." screen, so anything that throws before
+      // it is cleared - storage unavailable, a malformed stored address -
+      // leaves the app on that screen with no way forward.
       try {
+        // The stored backend address has to be in place before the first
+        // request, otherwise boot would talk to the compiled-in default.
+        await loadBaseUrl();
+
+        const token = await loadToken();
+        if (!token) return;
+
         const me = await api.get('/api/auth/me');
         setUser(me.user);
         setProvider(me.provider);
         setMode(modeForRoleCode(me.user.role_code));
         connectSocket();
-      } catch {
-        await clearToken();
+      } catch (err) {
+        // A token that cannot be used is worse than none: it would send the
+        // app to a signed-in screen that then fails every request.
+        console.warn('[auth] starting signed out:', err.message);
+        await clearToken().catch(() => {});
       } finally {
         setBooting(false);
       }
@@ -76,6 +82,14 @@ export function AuthProvider({ children }) {
     setProvider(session.provider || null);
     setMode(modeForRoleCode(actual));
     connectSocket();
+
+    // Register this handset for push every time somebody signs in, not once
+    // on install: the token has to follow whoever is actually signed in here,
+    // and it can rotate. Deliberately not awaited - a driver should not wait
+    // on a permission dialog to reach their console, and a refusal is not an
+    // error worth surfacing at sign-in.
+    registerForPush().catch(() => {});
+
     return session.user;
   }
 
@@ -91,52 +105,80 @@ export function AuthProvider({ children }) {
        * and verified here where it cannot (the provider console covers two role
        * codes, and /api/auth/login only accepts one).
        */
+      /**
+       * `identifier` is an email address or a mobile number. An account made
+       * by verifying an address knows that address; it may not remember which
+       * number it typed at sign-up, so either has to work.
+       */
       async signIn(roleKey, identifier, password) {
         const role = roleFor(roleKey);
         const body = {
-          email: identifier.includes('@') ? identifier : undefined,
-          phone_no: identifier.includes('@') ? undefined : identifier,
-          identifier,
+          ...(String(identifier).includes('@')
+            ? { email_id: identifier }
+            : { phone_no: identifier }),
           password,
         };
         if (role?.roleCode) body.role_code = role.roleCode;
         return adopt(await api.post('/api/auth/login', body), roleKey);
       },
 
-      async register(roleKey, details) {
-        return adopt(await api.post('/api/auth/register', details), roleKey);
-      },
+      /**
+       * Starts a registration: the server checks the details and emails a
+       * code. It does not create the account - `verifyOtp` does, once the
+       * code comes back - so there is no session to adopt here.
+       */
+      startRegistration: (details) => api.post('/api/auth/register', details),
 
-      requestOtp: (identifier, purpose = 'LOGIN', extra = {}) => api.post('/api/auth/otp/request', {
-        email: identifier.includes('@') ? identifier : undefined,
-        phone_no: identifier.includes('@') ? extra.phone_no : identifier,
-        identifier,
-        purpose,
-        ...extra,
-      }),
+      /**
+       * Forgotten password, in two steps like registration.
+       *
+       * `forgotPassword` answers the same way whether or not the address has
+       * an account, so the screen cannot be used to ask which addresses are
+       * registered. The person who mistyped theirs finds out from the email
+       * that never arrives.
+       */
+      forgotPassword: (email_id) => api.post('/api/auth/password/forgot', { email_id }),
 
-      async verifyOtp(roleKey, identifier, otp_code) {
-        return adopt(await api.post('/api/auth/otp/verify', {
-          email: identifier.includes('@') ? identifier : undefined,
-          phone_no: identifier.includes('@') ? undefined : identifier,
-          identifier,
+      resetPassword: (email_id, otp_code, new_password) =>
+        api.post('/api/auth/password/reset', { email_id, otp_code, new_password }),
+
+      /**
+       * Asks for a code against one contact detail. `identifier` is an email
+       * address or a mobile number; the server works out which from the shape
+       * it arrives in, so the screen does not have to.
+       *
+       * REGISTER rather than the LOGIN default, because this one screen serves
+       * both signing in and signing up, and LOGIN refuses an address it does
+       * not know.
+       */
+      requestOtp: (identifier, options = {}) =>
+        api.post('/api/auth/otp/request', {
+          ...(String(identifier).includes('@')
+            ? { email_id: identifier }
+            : { phone_no: identifier }),
+          purpose: 'REGISTER',
+          ...options,
+        }),
+
+      /**
+       * A correct code on an unknown number registers it (F.1). The server
+       * asks for a name when it needs one rather than failing, so `details`
+       * carries whatever the screen has collected.
+       */
+      async verifyOtp(roleKey, identifier, otp_code, details = {}) {
+        const role = roleFor(roleKey);
+        const body = {
+          ...(String(identifier).includes('@')
+            ? { email_id: identifier }
+            : { phone_no: identifier }),
           otp_code,
-        }), roleKey);
-      },
-
-      async forgotPassword(identifier) {
-        return api.post('/api/auth/forgot-password', {
-          email: identifier.includes('@') ? identifier : undefined,
-          phone_no: identifier.includes('@') ? undefined : identifier,
-          identifier,
-        });
-      },
-
-      async resetPassword(token, new_password) {
-        return api.post('/api/auth/reset-password', {
-          token,
-          new_password,
-        });
+          ...details,
+        };
+        // The provider console covers two role codes; default new accounts
+        // there to DRIVER, which the person can turn into an organisation when
+        // they add their vehicle.
+        if (!body.role_code) body.role_code = role?.roleCode || (roleKey === 'PROVIDER' ? 'DRIVER' : 'USER');
+        return adopt(await api.post('/api/auth/otp/verify', body), roleKey);
       },
 
       /**
@@ -162,6 +204,11 @@ export function AuthProvider({ children }) {
       },
 
       async signOut() {
+        // Before the token is revoked, while the request can still be
+        // authorised: a shared phone must not keep delivering this driver's
+        // dispatch offers to whoever picks it up next.
+        await unregisterPush();
+
         // Revoke server-side first; clearing the token locally alone would leave
         // a usable token in existence for the rest of its 24 hours.
         await api.post('/api/auth/logout', {}).catch(() => {});

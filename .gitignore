@@ -1,35 +1,8 @@
-# Dependencies
 node_modules/
-**/node_modules/
-
-# Environment files
-.env
-**/.env
-!.env.example
-
-# Expo & Web
 .expo/
-**/.expo/
 dist/
-
-# Android build artifacts and caches (avoids pushing 1.7GB build files)
-**/android/app/build/
-**/android/build/
-**/android/.gradle/
-**/android/app/.cxx/
-**/android/.cxx/
-**/android/local.properties
-**/.kotlin/
-
-# Logs
+.env
 *.log
-npm-debug.log*
-
-# Database local storage
-backend/data/*.db
-backend/data/*.db-journal
-
-# OS metadata
+backend/data/
 .DS_Store
-**/.DS_Store
-*.apk
+

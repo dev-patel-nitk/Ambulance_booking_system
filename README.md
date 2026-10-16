@@ -124,6 +124,33 @@ To see automatic reassignment (F.7): put two drivers on duty, book, and **declin
 the first offer — the request moves to the next-best ambulance on its own. Ignoring
 the offer for 45 seconds does the same thing.
 
+## The five request types
+
+| Code | Means | Dispatch |
+|---|---|---|
+| `PTV` | Patient transport | Ranked list, one offer at a time |
+| `BLS` | Basic life support | Ranked list, one offer at a time |
+| `ALS` | Advanced life support | Ranked list, one offer at a time |
+| `ICU` | Mobile ICU | Ranked list, one offer at a time |
+| `EMG` | **Emergency — send anything** | **Every ambulance in range, all at once** |
+
+`EMG` is deliberately not a vehicle class, and no provider can register as one.
+"Emergency" describes what the caller needs, not what is parked outside the
+hospital — which is also what makes "offer it to everybody" coherent. Two rules
+follow from that:
+
+- **Every class is eligible.** A PTV may not serve an ICU request, because care
+  level must never be downgraded. An emergency has no such floor: the nearest
+  ambulance is better than the right ambulance later.
+- **They are alerted together, not in turn.** The ranked list still decides who
+  is asked, but all of them are asked at the same moment and the first to accept
+  takes it. The rest have their offer closed and are told why, rather than
+  watching a countdown on a job that has gone. `BROADCAST_LIMIT` caps the
+  fan-out so one request in a dense area cannot produce hundreds of alerts.
+
+The control room sees the fan-out as what it is — one row per ambulance
+alerted, with its rank — rather than as a single mysterious offer.
+
 ## How the dispatch engine works
 
 `backend/src/services/dispatch.js` is the heart of the system.
@@ -146,15 +173,17 @@ Timers are re-armed on restart, so a server bounce mid-offer does not strand a r
 cd backend && npm test
 ```
 
-137 tests, no external services required — the suite boots the API on an ephemeral
+146 tests, no external services required — the suite boots the API on an ephemeral
 port against a throwaway database, and the WhatsApp and maps adapters fall back to
 their offline paths.
 
 | Level | Suite | Covers |
 |---|---|---|
 | Unit (76) | `tests/unit/*.test.js` | Fare arithmetic, geodesy, polyline decoding, identifier formats, timezone bucketing, rate-limit windows, data-dictionary validators, gateway signature verification, WhatsApp template parameters |
-| Integration (50) | `tests/integration/api.test.js` | Auth and RBAC, the full booking → dispatch → trip → invoice → rating lifecycle, automatic reassignment, privacy, rate limiting, admin reports and the audit trail |
+| Integration (59) | `tests/integration/api.test.js` | Auth and RBAC, the full booking → dispatch → trip → invoice → rating lifecycle, automatic reassignment, privacy, rate limiting, admin reports and the audit trail |
 | | `tests/integration/session.test.js` | Session records in D1, listing and ending your own sessions |
+| | `tests/integration/alerts.test.js` | That the lifecycle steps nobody is watching the screen for also leave the building as WhatsApp alerts |
+| | `tests/integration/otp-register.test.js` | Registering by code, OTP-only accounts setting a first password, and that nobody can make themselves an administrator that way |
 | System (11) | `tests/system/recovery.test.js` | Recovery sweep, availability consistency, reporting calendar, batch list queries |
 
 Run one level at a time with `npm run test:unit`, `test:integration` or `test:system`;
@@ -229,6 +258,102 @@ to state the amount.
 Because it sums straight-line hops between fixes, the odometer slightly under-reads
 true road distance, and the gap narrows as the ping interval shortens.
 
+## Alerts and calling
+
+**Reaching a driver** happens on two levels, and they are worth keeping apart.
+
+A *local* alert is raised by the app itself: a heads-up banner, a sound and a
+vibration, scheduled on the device and delivered by the operating system. It
+needs no push service, no credentials and no money, and it is what makes a
+45-second offer noticeable rather than merely present on a screen nobody is
+looking at. It only fires while the app is running, because the socket that
+carried the offer dies with the process.
+
+A *push* notification is the only thing that reaches a phone whose app is
+closed. On Android that means Firebase Cloud Messaging, and **this build has
+no FCM credentials**, so `getExpoPushTokenAsync` fails and nothing is ever
+sent. Expo Go works because it carries Expo's own credentials; a built APK
+does not. Fixing it needs a Firebase project, its service-account key uploaded
+with `eas credentials`, and a rebuild.
+
+Until then the alerts panel says exactly that rather than reporting a flat
+failure, and the test button demonstrates the local alert instead.
+
+**Push notifications**, when configured, are the channel that decides whether
+a dispatch offer is seen at all — everything else in the app assumes somebody is looking. The socket
+needs the app open; the inbox needs the screen on; a driver waiting for work is
+doing neither, and an offer expires in 45 seconds.
+
+They go through Expo's push service, which needs no credentials: the device
+token is both the address and the authorisation. The app registers on every
+sign-in rather than once on install, because a token can rotate and has to
+follow whoever is signed in on that handset — and it unregisters on sign-out,
+so a shared phone stops delivering the previous driver's offers.
+
+Android decides whether a notification may interrupt by its *channel*, not by
+the message, so there are two: `dispatch` can break through Do Not Disturb, and
+`default` cannot. Each role's profile screen has a **Send a test alert** button,
+because the way this fails is silent — notifications were declined months ago,
+nothing looks broken, and offers simply never arrive.
+
+Set `PUSH_MOCK=true` to log and record alerts without calling Expo. The test
+suite does this, so running the tests sends nothing.
+
+**Calling** is a handoff to the phone's own dialer, not voice carried in the
+app. A crew who cannot find a patient, and a patient watching an ambulance go
+past the turning, both need a call that works on a weak signal, with the app in
+the background, and without this server being reachable. Carrying voice in-app
+would be a worse answer to that problem — which is why the real 108 service,
+and every ride-hailing app, does the same thing.
+
+What the server owes them is the number, and `POST /api/bookings/:id/call`
+releases it only between the two parties of a live booking and writes every
+release to the audit trail (C.5). Number masking through a relay provider would
+be the production refinement; it needs a paid Indian number.
+
+## Deploying to Render
+
+Deploying is worth doing for a reason beyond tidiness: it ends the LAN-address
+problem. With the API on a fixed public URL the APK no longer has to be told
+which Wi-Fi it is on, and a demonstration stops depending on two phones and a
+laptop sharing a network.
+
+`render.yaml` in the repository root is a Render blueprint. Push it, then in the
+Render dashboard choose **New → Blueprint** and point it at this repository.
+Render reads the file and creates the service; set `BREVO_API_KEY` in the
+dashboard rather than in the file, which is in version control.
+
+The service is deployed at:
+
+```
+https://ambulance-booking-api.onrender.com
+```
+
+`mobile/app/eas.json` already points the `apk-hosted` profile at it, so the
+installable build is:
+
+```bash
+eas build --platform android --profile apk-hosted
+```
+
+The `apk-lan` profile is still there for working offline against a laptop on
+the same network. It is rarely needed now: the hosted APK can be pointed at a
+LAN address from the sign-in screen at runtime, which is the whole reason that
+setting exists.
+
+Two things about the free plan to know before demo day, neither of which is a
+fault in the code:
+
+- **The filesystem is ephemeral.** It is rebuilt on every deploy and every wake
+  from idle, and the SQLite file goes with it. The app seeds itself on boot so
+  it always comes back usable — fare rules, demo accounts, an administrator —
+  but bookings made before a restart will not be there. To keep data, move to a
+  paid instance and uncomment the disk block in `render.yaml`; the database path
+  already comes from the environment, so no code changes.
+- **The service sleeps after 15 minutes idle**, and the next request waits
+  roughly 50 seconds while it wakes. Open the `/health` URL a minute before
+  presenting and it will be warm.
+
 ## Configuration
 
 Everything is driven by `backend/.env` (see `.env.example` for the full list).
@@ -254,6 +379,23 @@ returns both forms of its message — the readable `body` and the ordered `param
 for the template of the same name — so switching is a configuration change, not
 a code change. Template parameters cannot contain newlines, which is why the
 layout belongs in the approved template and each parameter is a flat value.
+
+**Email** — a verification code can travel by email instead of WhatsApp: the
+sign-in screen offers the choice, and `POST /api/auth/otp/request` takes
+`"channel": "EMAIL"`. The mobile number is still what identifies the account —
+the data dictionary makes `phone_no` NOT NULL UNIQUE, and a crew who cannot find
+the patient has to be able to ring them — so email chooses the postman, not the
+identity.
+
+Leave `EMAIL_HOST` empty for the mock transport, which logs the code and writes
+the same `messages` row. For real delivery with Gmail: turn on 2-step
+verification, create an App Password at `myaccount.google.com/apppasswords`, and
+use it as `EMAIL_PASS` — a normal Google password will not authenticate over
+SMTP.
+
+Email is worth knowing about because it is the only channel with no conditions
+attached: no 24-hour window, no template approval, and no billing relationship.
+Where a business-initiated WhatsApp message needs all three, an email needs none.
 
 **Maps** — defaults to OpenStreetMap: Nominatim for geocoding, OSRM for routing, no
 API key required. Set `MAPS_PROVIDER=google` with a `GOOGLE_MAPS_API_KEY` to switch to
@@ -310,6 +452,48 @@ EAS builds in the cloud and returns a download link. Install it on the phone the
 way you would any APK — allow installation from unknown sources, tap the file.
 No Google Play account is involved.
 
+### Building on this machine instead of EAS
+
+EAS builds in the cloud and queues behind other people's jobs, which on the
+free plan has meant anything from ten minutes to an hour. A local build takes
+three to five once the toolchain is warm.
+
+```powershell
+cd mobile/app
+.uild-apk.ps1                                    # against the deployed API
+.uild-apk.ps1 -ApiUrl http://192.168.1.17:4000   # against a laptop on the LAN
+.uild-apk.ps1 -Clean                             # after changing app.json
+```
+
+It regenerates `android/` with `expo prebuild` each time rather than trusting
+what is there. That directory is build output - gitignored, and rebuilt from
+`app.json` - so regenerating means a change to a permission or a plugin cannot
+be silently missed.
+
+What it needs, once:
+
+| | |
+|---|---|
+| JDK 17 | `java -version` |
+| Android SDK | platforms 35 & 36, build-tools 35.0.0 & 36.0.0, platform-tools |
+| Licences | `sdkmanager --licenses` |
+
+Install the SDK with the command-line tools from
+[developer.android.com](https://developer.android.com/studio#command-tools),
+unzipped so that `sdkmanager.bat` sits at
+`%USERPROFILE%\Android\Sdk\cmdline-tools\latestin`. Gradle downloads
+itself on the first build, which is why that one takes far longer than the
+rest.
+
+**Which to use.** A local build is signed with the debug keystore - the React
+Native default, and a key whose password is published. It installs and runs,
+which is all an iteration needs. The APK you actually hand to somebody should
+come from EAS, which holds the project's own release keystore, so each build
+installs over the last.
+
+Mixing the two means uninstalling first: Android refuses to replace an app
+with one signed by a different key, and that refusal is the point of signing.
+
 ### Pointing the app at your backend
 
 A packaged APK has no dev server to ask for the LAN address, so it starts from
@@ -350,8 +534,8 @@ code runs on an iPhone through Expo Go if you ever want to show it.
 
 ## Notes on scope
 
-- The mobile apps use Leaflet in a WebView for maps rather than `react-native-maps`,
-  so they run in plain Expo Go with no Google Maps key and no custom dev build.
+- The app uses Leaflet in a WebView for maps rather than `react-native-maps`, so it
+  runs in plain Expo Go with no Google Maps key and no custom dev build.
 - Location is reported while the app is in the foreground. Background tracking needs
   a development build and the `expo-location` background permission.
 - Push notifications go over the Socket.IO channel. Adding Expo push tokens would

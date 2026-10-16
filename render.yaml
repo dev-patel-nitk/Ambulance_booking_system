@@ -1,64 +1,93 @@
+# Render blueprint for the Ambulance Booking System backend.
+#
+# Deploying matters for a reason beyond tidiness: it ends the LAN-address
+# problem. With the API on a fixed public URL the APK no longer has to be told
+# which Wi-Fi it is on, and a demo stops depending on two phones and a laptop
+# sharing a network.
+#
+# To use it: push this file, then in the Render dashboard choose
+# New -> Blueprint and point it at this repository. Render reads this file and
+# creates the service. Set BREVO_API_KEY in the dashboard rather than here.
+
 services:
   - type: web
-    name: ambulance-booking-backend
-    env: node
+    name: ambulance-booking-api
+    runtime: node
     plan: free
+    region: singapore          # nearest region to India
     rootDir: backend
-    buildCommand: npm install
+    buildCommand: npm ci --omit=dev
     startCommand: npm start
+
+    # Render restarts the service if this stops answering. /health reports the
+    # row counts, so a database that came back empty is visible rather than
+    # silently serving an empty fleet.
     healthCheckPath: /health
+
     envVars:
+      # node:sqlite arrived in Node 22.5, and the whole persistence layer is
+      # built on it. Render's default runtime version is not guaranteed to be
+      # new enough, and the failure would be at boot with a bare "no such
+      # built-in module", so it is pinned rather than inferred.
       - key: NODE_VERSION
-        value: 22.11.0
-      - key: NODE_OPTIONS
-        value: "--experimental-sqlite"
+        value: 22.17.0
+
       - key: NODE_ENV
         value: production
-      - key: CORS_ORIGIN
-        value: "*"
+
+      # Render provides PORT; the app already reads it.
+
       - key: JWT_SECRET
-        generateValue: true
-      - key: JWT_EXPIRES_IN
-        value: 24h
+        generateValue: true     # a fresh secret Render keeps to itself
+
+      # The browser build of the app and any other origin that needs to reach
+      # this API. Narrow it once the app's own URL is known.
+      - key: CORS_ORIGIN
+        value: '*'
+
+      # A verification code is a credential. Exposing it in the response is a
+      # development convenience and must not survive into a deployment.
       - key: EXPOSE_OTP_IN_RESPONSE
-        value: "true"
-      - key: OTP_CHANNEL
-        value: email
-      - key: EMAIL_WEBHOOK_URL
-        value: ""
-      - key: RESEND_API_KEY
-        value: ""
-      - key: BREVO_API_KEY
-        sync: false
-      - key: BREVO_SENDER_EMAIL
-        value: "mr.cool0631@gmail.com"
+        value: 'false'
+
       - key: EMAIL_PROVIDER
         value: brevo
-      - key: SMTP_HOST
-        value: smtp.gmail.com
-      - key: SMTP_PORT
-        value: "587"
-      - key: SMTP_SECURE
-        value: "false"
-      - key: SMTP_USER
-        value: devjipatelop@gmail.com
-      - key: SMTP_PASS
-        value: ravgiolawvhaiajj
+      # Brevo rejects a sender it has not verified, so this must match one
+      # listed under Senders, Domains & Dedicated IPs in the Brevo dashboard.
       - key: EMAIL_FROM
-        value: "Ambulance Booking System <devjipatelop@gmail.com>"
-      - key: SMS_PROVIDER
-        value: fast2sms
-      - key: FAST2SMS_API_KEY
-        value: EoYPAamSIegzNuXi0pK5jdkbL9Zx2fvlHCJFDMwsnW378yrcUGNjXrzvl6PfcHymexGSqMd8opB3LI2a
+        value: Ambulance Booking System <mr.cool0631@gmail.com>
+
+      # Set in the dashboard, not here: this file is in version control.
+      - key: BREVO_API_KEY
+        sync: false
+
       - key: MAPS_PROVIDER
         value: osm
-      - key: NOMINATIM_URL
-        value: https://nominatim.openstreetmap.org
-      - key: OSRM_URL
-        value: https://router.project-osrm.org
+      - key: GEO_CONTACT_EMAIL
+        value: team16@nitk.edu.in
+
       - key: PAYMENT_PROVIDER
         value: mock
-      - key: WATCHDOG_ENABLED
-        value: "true"
-      - key: SEARCH_RADIUS_KM
-        value: "15"
+
+      - key: REPORT_UTC_OFFSET
+        value: '+05:30'
+
+    # --- persistence ---------------------------------------------------
+    # A free web service has an ephemeral filesystem: it is rebuilt on every
+    # deploy and every wake from idle, and the SQLite file goes with it. The
+    # app seeds itself on boot so it always comes back usable, but bookings
+    # made before a restart will not be there.
+    #
+    # That is acceptable for a demonstration and is why this is left as the
+    # default. To keep data instead, move to a paid instance type and uncomment
+    # the disk below along with the DB_FILE variable - no code change is needed,
+    # since the database path is already read from the environment.
+    #
+    # disk:
+    #   name: data
+    #   mountPath: /var/data
+    #   sizeGB: 1
+    #
+    # and add to envVars:
+    #   - key: DB_FILE
+    #     value: /var/data/ambulance.db

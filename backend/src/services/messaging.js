@@ -12,149 +12,86 @@ const { messageId } = require('../utils/ids');
 
 const usingCloudApi = () => Boolean(config.whatsapp.token && config.whatsapp.phoneNumberId);
 
+/**
+ * Verification codes may travel by email instead of WhatsApp (F.1). Email is a
+ * delivery channel only - `phone_no` remains the account identifier, because
+ * the data dictionary makes it NOT NULL UNIQUE and a driver who cannot find
+ * the patient has to be able to ring them.
+ *
+ * Email is also the one channel that is unconditionally free: it has no
+ * 24-hour customer service window, needs no approved template, and no billing
+ * relationship with Meta.
+ */
+/**
+ * Which email transport is actually usable, decided once from what is
+ * configured rather than from what was asked for.
+ *
+ * Brevo wins when both are set, because its HTTP API works in places an
+ * outbound SMTP port does not - a hosted container among them. An explicit
+ * EMAIL_PROVIDER narrows the choice; it cannot conjure credentials that are
+ * absent, so a provider named without its key still falls back to the mock
+ * rather than failing every send at run time.
+ */
+function emailTransport() {
+  const wanted = config.email.provider;
+  const haveBrevo = Boolean(config.email.brevoApiKey);
+  const haveSmtp = Boolean(config.email.host && config.email.user);
+
+  if (wanted === 'mock') return 'mock';
+  if (wanted === 'brevo') return haveBrevo ? 'brevo' : 'mock';
+  if (wanted === 'smtp') return haveSmtp ? 'smtp' : 'mock';
+  if (haveBrevo) return 'brevo';
+  if (haveSmtp) return 'smtp';
+  return 'mock';
+}
+
+const usingSmtp = () => emailTransport() !== 'mock';
+
+/** Splits `Name <addr@host>` into Brevo's sender object. */
+function parseFrom(value) {
+  const m = String(value).match(/^\s*(.*?)\s*<([^>]+)>\s*$/);
+  return m ? { name: m[1] || undefined, email: m[2] } : { email: String(value).trim() };
+}
+
+async function sendViaBrevo({ emailId, subject, body }) {
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'api-key': config.email.brevoApiKey,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({
+      sender: parseFrom(config.email.from),
+      to: [{ email: emailId }],
+      subject,
+      textContent: body,
+    }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw Object.assign(new Error(json?.message || `Brevo returned ${res.status}`), { detail: json });
+  }
+  return json;
+}
+
 function toE164(phoneNo) {
   const digits = String(phoneNo).replace(/[^0-9]/g, '');
   return digits.length > 10 ? digits : config.whatsapp.countryCode + digits;
 }
 
-function to10Digits(phoneNo) {
-  const digits = String(phoneNo).replace(/[^0-9]/g, '');
-  return digits.length >= 10 ? digits.slice(-10) : digits;
-}
-
-const usingFast2sms = () => Boolean(config.sms?.fast2smsApiKey);
-
-let mailTransporter = null;
-function getMailTransporter() {
-  if (mailTransporter) return mailTransporter;
-  if (!config.email?.user || !config.email?.pass) return null;
-  const nodemailer = require('nodemailer');
-  const port = Number(config.email.port || 587);
-  const secure = Boolean(config.email.secure && port === 465);
-  mailTransporter = nodemailer.createTransport({
-    host: config.email.host || 'smtp.gmail.com',
-    port,
-    secure,
-    auth: {
-      user: config.email.user,
-      pass: config.email.pass,
-    },
-    tls: {
-      rejectUnauthorized: false,
-    },
-    connectionTimeout: 8000,
-    greetingTimeout: 8000,
-    socketTimeout: 8000,
-  });
-  return mailTransporter;
-}
-
-const usingEmail = () => Boolean(config.email?.webhookUrl || config.email?.resendApiKey || config.email?.brevoApiKey || (config.email?.user && config.email?.pass));
-
-async function sendEmail({ to, subject, html, text }) {
-  // 1. Google Apps Script Webhook Relay (HTTPS port 443 - zero SMTP port blocks, native Gmail delivery)
-  if (config.email.webhookUrl) {
-    try {
-      const res = await fetch(config.email.webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to, subject, html, text }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (data.success || res.ok) {
-        return { messageId: 'webhook-' + Date.now(), transport: 'webhook' };
-      }
-      console.warn('[email:webhook] Webhook returned error:', data);
-    } catch (e) {
-      console.warn('[email:webhook] Webhook failed, falling back to SMTP:', e.message);
-    }
-  }
-
-  // 2. Resend HTTPS API (port 443 - bypasses all cloud SMTP port blocks)
-  if (config.email.resendApiKey) {
-    try {
-      const res = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${config.email.resendApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          from: config.email.from || 'Ambulance Booking System <onboarding@resend.dev>',
-          to: [to],
-          subject,
-          html,
-          text,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.id) {
-        return { messageId: data.id, transport: 'resend' };
-      }
-      console.warn('[email:resend] Failed, falling back to SMTP:', data);
-    } catch (e) {
-      console.warn('[email:resend] Error, falling back to SMTP:', e.message);
-    }
-  }
-
-  // 3. Brevo HTTPS API (port 443 - zero cloud port block, 300 free emails/day)
-  if (config.email.brevoApiKey) {
-    try {
-      const senderEmail = config.email.brevoSenderEmail || config.email.user || 'devjipatelop@gmail.com';
-      const res = await fetch('https://api.brevo.com/v3/smtp/email', {
-        method: 'POST',
-        headers: {
-          'api-key': config.email.brevoApiKey,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
-          sender: { name: 'Ambulance Booking System', email: senderEmail },
-          to: [{ email: to }],
-          subject,
-          htmlContent: html,
-          textContent: text,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.messageId) {
-        console.log(`[email:brevo] Sent successfully to ${to} (id: ${data.messageId})`);
-        return { messageId: data.messageId, transport: 'brevo' };
-      }
-      console.warn('[email:brevo] API call failed:', res.status, data);
-    } catch (e) {
-      console.warn('[email:brevo] Error, falling back to SMTP:', e.message);
-    }
-  }
-
-  // 4. Direct Gmail SMTP (port 587 STARTTLS)
-  const transporter = getMailTransporter();
-  if (!transporter) throw new Error('Email credentials not configured');
-  return Promise.race([
-    transporter.sendMail({
-      from: config.email.from || `"Ambulance Booking System" <${config.email.user}>`,
-      to,
-      subject,
-      text,
-      html,
-    }),
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Email send timed out (4s)')), 4000)
-    ),
-  ]);
-}
-
-function record({ recipientPhone, channel, templateId, body, bookingId, deliveryState, providerResponse }) {
+function record({ recipientPhone, recipientEmail, channel, templateId, body, bookingId, deliveryState, providerResponse }) {
   const id = messageId();
   db.prepare(
-    `INSERT INTO messages (message_id, booking_id, recipient_phone, message_channel,
+    `INSERT INTO messages (message_id, booking_id, recipient_phone, recipient_email, message_channel,
                            message_template_id, body, delivery_state, delivery_timestamp,
                            provider_response, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     bookingId || null,
     recipientPhone,
+    recipientEmail || null,
     channel,
     templateId || null,
     body || null,
@@ -163,7 +100,7 @@ function record({ recipientPhone, channel, templateId, body, bookingId, delivery
     providerResponse ? JSON.stringify(providerResponse).slice(0, 2000) : null,
     nowIso()
   );
-  return Object.assign(new String(id), { id, deliveryState });
+  return id;
 }
 
 /** Meta rejects a template parameter containing a newline or a tab. */
@@ -252,231 +189,102 @@ async function sendWhatsApp({ phoneNo, body, params, templateId, bookingId }) {
   }
 }
 
-async function sendViaFast2SMS({ phoneNo, otpCode }) {
-  const numbers = to10Digits(phoneNo);
-  const url = 'https://www.fast2sms.com/dev/bulkV2';
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      authorization: config.sms.fast2smsApiKey,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      route: 'otp',
-      variables_values: String(otpCode),
-      numbers,
-    }),
-  });
-
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok || json.return === false || (json.status_code && json.status_code !== 200)) {
-    const errorMsg = json?.message || (Array.isArray(json?.message) ? json.message.join(', ') : 'Fast2SMS OTP delivery failed');
-    throw Object.assign(new Error(errorMsg), { detail: json });
+// nodemailer builds a connection pool, so the transport is created once and
+// reused rather than per message.
+let mailer = null;
+function smtp() {
+  if (!mailer) {
+    // Required here rather than at the top of the file so a deployment that
+    // never sends email does not pay to load it.
+    const nodemailer = require('nodemailer');
+    mailer = nodemailer.createTransport({
+      host: config.email.host,
+      port: config.email.port,
+      secure: config.email.secure,
+      auth: { user: config.email.user, pass: config.email.pass },
+    });
   }
-  return json;
+  return mailer;
 }
 
-/** OTP delivery path: sends to Email when configured, or SMS / mock. */
-async function sendOtp({ phoneNo, email, otpCode }) {
+/**
+ * Sends an email and logs it beside every other channel, so the control room's
+ * alert log stays a single list. Like sendWhatsApp it resolves rather than
+ * rejects: a mail outage must not take a registration down with it.
+ */
+async function sendEmail({ emailId, phoneNo, subject, body, templateId, bookingId }) {
+  const via = emailTransport();
+  const log = (deliveryState, providerResponse) => record({
+    recipientPhone: phoneNo, recipientEmail: emailId, channel: 'EMAIL',
+    templateId, body, bookingId, deliveryState,
+    providerResponse: { transport: via, ...providerResponse },
+  });
+
+  if (via === 'mock') {
+    console.log(`\n[email:mock -> ${emailId}] ${subject}\n${body}\n`);
+    return log('SENT', {});
+  }
+
+  try {
+    if (via === 'brevo') {
+      const json = await sendViaBrevo({ emailId, subject, body });
+      return log('SENT', { messageId: json.messageId });
+    }
+    const info = await smtp().sendMail({
+      from: config.email.from, to: emailId, subject, text: body,
+    });
+    return log('SENT', { messageId: info.messageId, accepted: info.accepted });
+  } catch (err) {
+    console.error(`[email:${via}] send failed:`, err.message);
+    return log('FAILED', { error: err.message, detail: err.detail });
+  }
+}
+
+/**
+ * Sends a verification code (F.1) over whichever channel was asked for. All
+ * channels share the delivery log, so a receipt looks the same however the
+ * code travelled.
+ */
+async function sendOtp({ phoneNo, otpCode, channel = 'WHATSAPP', emailId = null }) {
   const body = `Your Ambulance Booking System verification code is ${otpCode}. It is valid for 5 minutes. Do not share this code.`;
 
-  // 1. Email OTP delivery (zero KYC, instant Gmail delivery)
-  if (usingEmail()) {
-    let recipientEmail = email;
-    if (!recipientEmail && phoneNo) {
-      try {
-        const user = db.prepare('SELECT email_id FROM users WHERE phone_no = ?').get(phoneNo);
-        if (user?.email_id && user.email_id.includes('@')) {
-          recipientEmail = user.email_id;
-        }
-      } catch (_) {}
-    }
-    if (!recipientEmail) {
-      recipientEmail = config.email.user;
-    }
-
-    try {
-      const info = await sendEmail({
-        to: recipientEmail,
-        subject: `🚑 Your Ambulance Verification Code: ${otpCode}`,
-        text: body,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
-            <div style="text-align: center; margin-bottom: 20px;">
-              <span style="font-size: 38px;">🚑</span>
-              <h2 style="color: #0f172a; margin: 8px 0 0; font-size: 20px;">Ambulance Booking System</h2>
-              <p style="color: #64748b; font-size: 13px; margin-top: 4px;">Account Verification Code</p>
-            </div>
-            <div style="background-color: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px; padding: 18px; text-align: center; margin-bottom: 20px;">
-              <p style="color: #64748b; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 6px;">Your One-Time Password</p>
-              <h1 style="font-size: 34px; letter-spacing: 8px; color: #dc2626; margin: 0; font-family: monospace;">${otpCode}</h1>
-              <p style="color: #94a3b8; font-size: 12px; margin: 6px 0 0;">Valid for 5 minutes</p>
-            </div>
-            <p style="color: #475569; font-size: 14px; line-height: 1.5; margin-bottom: 16px;">
-              Use this code to sign in or verify your account. For security reasons, please do not share this code with anyone.
-            </p>
-            <div style="border-top: 1px solid #f1f5f9; padding-top: 14px; text-align: center;">
-              <p style="color: #94a3b8; font-size: 12px; margin: 0;">Sent to: ${recipientEmail} ${phoneNo ? `(Mobile: ${phoneNo})` : ''}</p>
-            </div>
-          </div>
-        `,
-      });
-
-      console.log(`\n[otp:email -> ${recipientEmail}] OTP sent successfully: ${otpCode} (id: ${info.messageId})\n`);
-      return record({
-        recipientPhone: phoneNo || recipientEmail,
-        channel: 'SMS',
-        templateId: 'EMAIL_OTP',
-        body,
-        deliveryState: 'SENT',
-        providerResponse: { transport: 'email', messageId: info.messageId, recipient: recipientEmail },
-      });
-    } catch (err) {
-      console.error(`\n[otp:email] Send failed to ${recipientEmail}:`, err.message, '\n');
-      if (phoneNo && usingFast2sms()) {
-        try {
-          const smsRes = await sendViaFast2SMS({ phoneNo, otpCode });
-          console.log(`\n[sms:fast2sms-fallback -> ${phoneNo}] OTP sent successfully via SMS fallback: ${otpCode}\n`);
-          return record({
-            recipientPhone: phoneNo,
-            channel: 'SMS',
-            templateId: 'FAST2SMS_OTP_FALLBACK',
-            body,
-            deliveryState: 'SENT',
-            providerResponse: smsRes,
-          });
-        } catch (smsErr) {
-          console.error('[sms:fast2sms-fallback] SMS fallback also failed:', smsErr.message);
-        }
-      }
-      return record({
-        recipientPhone: phoneNo || recipientEmail,
-        channel: 'SMS',
-        templateId: 'EMAIL_OTP',
-        body,
-        deliveryState: 'FAILED',
-        providerResponse: { transport: 'email', error: err.message, detail: err },
-      });
-    }
+  if (channel === 'EMAIL') {
+    if (!emailId) throw new Error('sendOtp: channel EMAIL needs an emailId');
+    return sendEmail({
+      emailId,
+      phoneNo,
+      subject: `${otpCode} is your Ambulance Booking verification code`,
+      body,
+      templateId: config.whatsapp.templates.otp,
+    });
   }
 
-  // 2. SMS delivery via Fast2SMS
-  if (usingFast2sms()) {
-    try {
-      const response = await sendViaFast2SMS({ phoneNo, otpCode });
-      console.log(`\n[sms:fast2sms -> ${phoneNo}] OTP sent successfully: ${otpCode} (req_id: ${response?.request_id || 'ok'})\n`);
-      return record({
-        recipientPhone: phoneNo,
-        channel: 'SMS',
-        templateId: 'FAST2SMS_OTP',
-        body,
-        deliveryState: 'SENT',
-        providerResponse: response,
-      });
-    } catch (err) {
-      console.error(`\n[sms:fast2sms] Delivery failed to ${phoneNo}:`, err.message, '\n');
-      return record({
-        recipientPhone: phoneNo,
-        channel: 'SMS',
-        templateId: 'FAST2SMS_OTP',
-        body,
-        deliveryState: 'FAILED',
-        providerResponse: { error: err.message, detail: err.detail },
-      });
-    }
+  if (!usingCloudApi()) {
+    console.log(`\n[otp:mock -> ${phoneNo}] ${otpCode}\n`);
+    return record({
+      recipientPhone: phoneNo, channel: 'SMS', templateId: config.whatsapp.templates.otp,
+      body, deliveryState: 'SENT', providerResponse: { transport: 'mock' },
+    });
   }
-
-  // 3. Fallback to mock transport
-  console.log(`\n[otp:mock -> ${phoneNo}] ${otpCode}\n`);
-  return record({
-    recipientPhone: phoneNo,
-    channel: 'SMS',
-    templateId: 'MOCK_OTP',
-    body,
-    deliveryState: 'SENT',
-    providerResponse: { transport: 'mock' },
-  });
+  return sendWhatsApp({ phoneNo, body, templateId: config.whatsapp.templates.otp });
 }
 
-/** Outbound password reset email with token and direct link */
-async function sendPasswordResetEmail({ email, resetToken, resetUrl, userName }) {
-  const greeting = userName ? `Hello ${userName},` : 'Hello,';
-  const actionUrl = resetUrl || `http://localhost:3000/reset-password?token=${encodeURIComponent(resetToken)}`;
-  const body = `${greeting}\n\nYou requested a password reset for your Ambulance Booking System account.\n\nYour Reset Code is: ${resetToken}\nOr use this link to reset your password:\n${actionUrl}\n\nThis code and link are valid for 15 minutes. If you did not request this, please ignore this email.`;
-
-  if (usingEmail()) {
-    try {
-      const info = await sendEmail({
-        to: email,
-        subject: '🔐 Reset Your Ambulance Booking System Password',
-        text: body,
-        html: `
-          <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 28px; border: 1px solid #EBEAEA; border-radius: 12px; background-color: #FFFFFF; color: #150202;">
-            <div style="text-align: center; margin-bottom: 24px;">
-              <span style="font-size: 40px;">🚑</span>
-              <h2 style="color: #DC3545; margin: 8px 0 0; font-size: 22px; font-weight: 700;">Ambulance Booking System</h2>
-              <p style="color: #606060; font-size: 13px; margin-top: 4px;">Emergency Care & Transport Service</p>
-            </div>
-            <p style="font-size: 15px; line-height: 1.5; color: #150202; margin-bottom: 16px;">
-              ${greeting}
-            </p>
-            <p style="font-size: 14px; line-height: 1.6; color: #606060; margin-bottom: 20px;">
-              We received a request to reset the password for your account. Use the verification token below or tap the reset button.
-            </p>
-            <div style="background-color: #F8FAFC; border: 1px dashed #C6C6C6; border-radius: 8px; padding: 20px; text-align: center; margin-bottom: 24px;">
-              <p style="color: #606060; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; margin: 0 0 8px; font-weight: 600;">Password Reset Code</p>
-              <h1 style="font-size: 32px; letter-spacing: 6px; color: #DC3545; margin: 0; font-family: monospace; font-weight: bold;">${resetToken}</h1>
-              <p style="color: #FFC107; font-size: 12px; font-weight: 600; margin: 8px 0 0;">Valid for 15 minutes</p>
-            </div>
-            <div style="text-align: center; margin-bottom: 24px;">
-              <a href="${actionUrl}" style="background-color: #DC3545; color: #FFFFFF; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 600; font-size: 15px; display: inline-block;">
-                Reset Password
-              </a>
-            </div>
-            <p style="font-size: 13px; color: #606060; line-height: 1.5; margin-bottom: 20px;">
-              If the button doesn't work, copy and paste this URL into your browser:<br/>
-              <a href="${actionUrl}" style="color: #0D6EFD; word-break: break-all; font-size: 12px;">${actionUrl}</a>
-            </p>
-            <div style="border-top: 1px solid #EBEAEA; padding-top: 16px; text-align: center;">
-              <p style="color: #94a3b8; font-size: 11px; margin: 0;">If you didn't request a password reset, you can safely ignore this email.</p>
-            </div>
-          </div>
-        `,
-      });
-
-      console.log(`\n[reset:email -> ${email}] Reset token sent successfully (id: ${info.messageId})\n`);
-      return record({
-        recipientPhone: email,
-        channel: 'SMS',
-        templateId: 'EMAIL_PASSWORD_RESET',
-        body,
-        deliveryState: 'SENT',
-        providerResponse: { transport: 'email', messageId: info.messageId, recipient: email },
-      });
-    } catch (err) {
-      console.error(`\n[reset:email] Send failed to ${email}:`, err.message, '\n');
-      return record({
-        recipientPhone: email,
-        channel: 'SMS',
-        templateId: 'EMAIL_PASSWORD_RESET',
-        body,
-        deliveryState: 'FAILED',
-        providerResponse: { transport: 'email', error: err.message, detail: err },
-      });
-    }
+/**
+ * `a***a@gmail.com` / `98****3210` - enough for someone to recognise where the
+ * code went, without the response disclosing a full address or number to
+ * whoever happened to ask for it.
+ */
+function maskDestination(value, channel) {
+  const v = String(value || '');
+  if (channel === 'EMAIL') {
+    const [local, domain] = v.split('@');
+    if (!domain) return v;
+    const head = local.slice(0, 1);
+    const tail = local.length > 2 ? local.slice(-1) : '';
+    const stars = Math.max(1, local.length - head.length - tail.length);
+    return `${head}${'*'.repeat(stars)}${tail}@${domain}`;
   }
-
-  // Fallback mock record when email is not configured
-  console.log(`\n[reset:mock -> ${email}] Reset Token: ${resetToken} | URL: ${actionUrl}\n`);
-  return record({
-    recipientPhone: email,
-    channel: 'SMS',
-    templateId: 'MOCK_PASSWORD_RESET',
-    body,
-    deliveryState: 'SENT',
-    providerResponse: { mock: true, resetToken, actionUrl },
-  });
+  return v.length <= 6 ? v : `${v.slice(0, 2)}${'*'.repeat(v.length - 6)}${v.slice(-4)}`;
 }
 
 /** Marks a delivery receipt, e.g. from a Meta webhook. */
@@ -568,19 +376,93 @@ const templates = {
       ],
     };
   },
+
+  // ----------------------------------------------------------------------
+  // The messages below cover the moments where the person is least likely to
+  // be looking at the app: a driver already heading somewhere, or a patient
+  // waiting on an ambulance that is not coming. An in-app notification alone
+  // is not enough when nobody is watching the screen.
+  // ----------------------------------------------------------------------
+
+  /** To the patient: nothing could be matched (F.7 exhausted). */
+  dispatchFailed({ booking, reason }) {
+    return {
+      body: [
+        'NO AMBULANCE AVAILABLE',
+        `Booking: ${booking.booking_id}`,
+        reason,
+        'Please try again, or call 108 immediately if this is an emergency.',
+      ].join('\n'),
+      params: [booking.booking_id, reason],
+    };
+  },
+
+  /** To the driver: the job they may already be driving to is off. */
+  bookingCancelled({ booking, reason }) {
+    return {
+      body: [
+        'BOOKING CANCELLED',
+        `Booking: ${booking.booking_id}`,
+        `Reason: ${reason}`,
+        'You do not need to continue to this pickup. You are available for new requests.',
+      ].join('\n'),
+      params: [booking.booking_id, reason],
+    };
+  },
+
+  /** To the patient: the control room cancelled it, not them. */
+  cancelledByControlRoom({ booking, reason }) {
+    return {
+      body: [
+        'BOOKING CANCELLED BY THE CONTROL ROOM',
+        `Booking: ${booking.booking_id}`,
+        `Reason: ${reason}`,
+        'Please book again if you still need an ambulance, or call 108.',
+      ].join('\n'),
+      params: [booking.booking_id, reason],
+    };
+  },
+
+  /** To the patient: NF.1 - the crew has gone quiet, and they should know. */
+  tripStalled({ booking }) {
+    return {
+      body: [
+        'WE HAVE LOST CONTACT WITH YOUR AMBULANCE',
+        `Booking: ${booking.booking_id}`,
+        'The crew has not reported their position recently. Our control room has been alerted.',
+        'If this is urgent, please also call 108.',
+      ].join('\n'),
+      params: [booking.booking_id],
+    };
+  },
+
+  /** To the driver: the recovery sweep took them off duty (C.6). */
+  takenOffDuty({ minutes }) {
+    return {
+      body: [
+        'YOU HAVE BEEN TAKEN OFF DUTY',
+        `Your app stopped reporting its location for more than ${minutes} minutes.`,
+        'Open the driver app and go on duty again to receive requests.',
+      ].join('\n'),
+      params: [String(minutes)],
+    };
+  },
+
+  /** To the driver: an invoice they are owed has settled. */
+  paymentReceived({ booking, invoice, paymentMode }) {
+    const amount = `Rs ${Number(invoice.fare_amount).toFixed(2)}`;
+    return {
+      body: [
+        'PAYMENT RECEIVED',
+        `Booking: ${booking.booking_id}`,
+        `Amount: ${amount} (${paymentMode})`,
+      ].join('\n'),
+      params: [booking.booking_id, amount, paymentMode],
+    };
+  },
 };
 
 module.exports = {
-  sendWhatsApp,
-  sendOtp,
-  sendPasswordResetEmail,
-  sendEmail,
-  sendViaFast2SMS,
-  usingFast2sms,
-  usingEmail,
-  updateDeliveryState,
-  templates,
-  usingCloudApi,
-  toE164,
-  to10Digits,
+  sendWhatsApp, sendEmail, sendOtp, updateDeliveryState, templates,
+  usingCloudApi, usingSmtp, emailTransport, toE164, maskDestination, parseFrom,
 };

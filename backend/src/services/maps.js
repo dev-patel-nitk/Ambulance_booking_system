@@ -26,29 +26,62 @@ async function httpJson(url, headers = {}) {
   }
 }
 
-// ------------------------------------------------------------------- OSM
+// ------------------------------------------------------------------- OSM (Nominatim & OSRM)
 async function osmGeocode(query, pincode) {
   const q = [query, pincode].filter(Boolean).join(' ');
-  const url = `${config.maps.nominatimUrl}/search?format=jsonv2&limit=5&countrycodes=in&q=${encodeURIComponent(q)}`;
-  const rows = await httpJson(url);
-  return rows.map((r) => ({
-    latitude: Number(Number(r.lat).toFixed(6)),
-    longitude: Number(Number(r.lon).toFixed(6)),
-    address_text: r.display_name,
-    place_id: String(r.place_id),
-  }));
+  try {
+    const url = `${config.maps.nominatimUrl}/search?format=jsonv2&limit=5&countrycodes=in&q=${encodeURIComponent(q)}`;
+    const rows = await httpJson(url);
+    if (Array.isArray(rows) && rows.length > 0) {
+      return rows.map((r) => ({
+        latitude: Number(Number(r.lat).toFixed(6)),
+        longitude: Number(Number(r.lon).toFixed(6)),
+        address_text: r.display_name,
+        place_id: String(r.place_id),
+      }));
+    }
+  } catch (err) {
+    console.warn('[maps] Nominatim geocode failed, attempting MapTiler fallback:', err.message);
+  }
+
+  // Fallback to MapTiler geocoding
+  if (config.maps.maptilerKey) {
+    try {
+      return await maptilerGeocode(q);
+    } catch (mErr) {
+      console.warn('[maps] MapTiler geocode fallback also failed:', mErr.message);
+    }
+  }
+  return [];
 }
 
 async function osmReverse(lat, lng) {
-  const url = `${config.maps.nominatimUrl}/reverse?format=jsonv2&lat=${lat}&lon=${lng}`;
-  const r = await httpJson(url);
-  return {
-    latitude: Number(lat),
-    longitude: Number(lng),
-    address_text: r.display_name || null,
-    place_id: r.place_id ? String(r.place_id) : null,
-    pincode: r.address?.postcode || null,
-  };
+  try {
+    const url = `${config.maps.nominatimUrl}/reverse?format=jsonv2&lat=${lat}&lon=${lng}`;
+    const r = await httpJson(url);
+    if (r && (r.display_name || r.name)) {
+      return {
+        latitude: Number(lat),
+        longitude: Number(lng),
+        address_text: r.display_name || r.name || null,
+        place_id: r.place_id ? String(r.place_id) : null,
+        pincode: r.address?.postcode || null,
+      };
+    }
+  } catch (err) {
+    console.warn('[maps] Nominatim reverse geocode failed, attempting MapTiler fallback:', err.message);
+  }
+
+  // Fallback to MapTiler reverse geocoding
+  if (config.maps.maptilerKey) {
+    try {
+      return await maptilerReverse(lat, lng);
+    } catch (mErr) {
+      console.warn('[maps] MapTiler reverse geocode fallback also failed:', mErr.message);
+    }
+  }
+
+  return { latitude: Number(lat), longitude: Number(lng), address_text: null, place_id: null, pincode: null };
 }
 
 async function osmRoute(from, to) {
@@ -58,12 +91,40 @@ async function osmRoute(from, to) {
     '?overview=full&geometries=polyline&alternatives=false&steps=false';
   const r = await httpJson(url);
   const route = r.routes?.[0];
-  if (!route) throw new Error('No route returned');
+  if (!route) throw new Error('No route returned from OSRM');
   return {
     route_polyline: route.geometry,
     route_distance_km: Number((route.distance / 1000).toFixed(2)),
     eta_minutes: Math.max(1, Math.round(route.duration / 60)),
     source: 'osrm',
+  };
+}
+
+// ---------------------------------------------------------------- MapTiler
+async function maptilerGeocode(query) {
+  if (!config.maps.maptilerKey || !query) return [];
+  const url = `https://api.maptiler.com/geocoding/${encodeURIComponent(query)}.json?key=${config.maps.maptilerKey}&country=in`;
+  const data = await httpJson(url);
+  return (data.features || []).map((f) => ({
+    latitude: Number(Number(f.geometry.coordinates[1]).toFixed(6)),
+    longitude: Number(Number(f.geometry.coordinates[0]).toFixed(6)),
+    address_text: f.place_name,
+    place_id: String(f.id),
+  }));
+}
+
+async function maptilerReverse(lat, lng) {
+  if (!config.maps.maptilerKey) throw new Error('No MapTiler key');
+  const url = `https://api.maptiler.com/geocoding/${lng},${lat}.json?key=${config.maps.maptilerKey}`;
+  const data = await httpJson(url);
+  const first = data.features?.[0];
+  const postal = first?.context?.find((c) => c.id.startsWith('postal_code'))?.text;
+  return {
+    latitude: Number(lat),
+    longitude: Number(lng),
+    address_text: first?.place_name || null,
+    place_id: first?.id ? String(first.id) : null,
+    pincode: postal || null,
   };
 }
 

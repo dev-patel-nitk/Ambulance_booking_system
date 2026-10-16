@@ -50,55 +50,32 @@ const Stack = createNativeStackNavigator();
 
 const navTheme = {
   ...DefaultTheme,
-  dark: false,
+  dark: true,
   colors: {
     ...DefaultTheme.colors,
     primary: colors.accent,
     background: colors.bg,
-    card: colors.white,
+    card: colors.surface,
     text: colors.text,
-    border: colors.border,
+    border: colors.line,
     notification: colors.accent,
   },
 };
 
 const screenOptions = {
-  headerStyle: {
-    backgroundColor: colors.white,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    elevation: 0,
-    shadowOpacity: 0,
-  },
-  headerTitleStyle: { color: colors.text, fontSize: 17, fontWeight: '700' },
+  headerStyle: { backgroundColor: colors.surface },
+  headerTitleStyle: { color: colors.text, fontSize: 17 },
   headerTintColor: colors.text,
   contentStyle: { backgroundColor: colors.bg },
-  tabBarStyle: {
-    backgroundColor: colors.white,
-    borderTopColor: colors.border,
-    borderTopWidth: 1,
-    height: 62,
-    paddingBottom: 8,
-    paddingTop: 6,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-  },
+  tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.line, height: 62, paddingBottom: 8, paddingTop: 6 },
   tabBarActiveTintColor: colors.accent,
   tabBarInactiveTintColor: colors.muted,
-  tabBarLabelStyle: { fontSize: 11.5, fontWeight: '700' },
+  tabBarLabelStyle: { fontSize: 11.5, fontWeight: '600' },
 };
 
 const stackOptions = {
-  headerStyle: {
-    backgroundColor: colors.white,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    elevation: 0,
-    shadowOpacity: 0,
-  },
-  headerTitleStyle: { color: colors.text, fontSize: 17, fontWeight: '700' },
+  headerStyle: { backgroundColor: colors.surface },
+  headerTitleStyle: { color: colors.text, fontSize: 17 },
   headerTintColor: colors.text,
   contentStyle: { backgroundColor: colors.bg },
 };
@@ -217,7 +194,7 @@ export default function App() {
     <SafeAreaProvider>
       <AuthProvider>
         <NavigationContainer theme={navTheme}>
-          <StatusBar style="dark" />
+          <StatusBar style="light" />
           <Root />
         </NavigationContainer>
       </AuthProvider>

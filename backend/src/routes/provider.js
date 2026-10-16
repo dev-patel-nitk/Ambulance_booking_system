@@ -5,7 +5,7 @@
 const express = require('express');
 const { db, nowIso, audit } = require('../db');
 const { nextId } = require('../utils/ids');
-const { haversineKm } = require('../utils/geo');
+const { haversineKm, decodePolyline } = require('../utils/geo');
 const v = require('../utils/validate');
 const { authenticate, requireRole, requireProvider } = require('../middleware/auth');
 const dispatch = require('../services/dispatch');
@@ -259,6 +259,11 @@ router.get('/offers', requireProvider, asyncRoute(async (req, res) => {
         0,
         Math.round((new Date(r.offer_expiry_timestamp).getTime() - Date.now()) / 1000)
       ),
+      // The socket payload says this too. A console that reloaded, or came
+      // back from the background, reads the list instead - and still has to
+      // be able to say "first to accept" rather than implying the job is
+      // already theirs.
+      broadcast: dispatch.isBroadcast(r),
     })),
   });
 }));
@@ -288,6 +293,7 @@ router.get('/trips/active', requireProvider, asyncRoute(async (req, res) => {
   res.json({
     trip: {
       ...trip,
+      route_points: trip.route_polyline ? decodePolyline(trip.route_polyline) : [],
       patient: { full_name: trip.patient_name || patient.full_name, phone_no: trip.contact_phone || patient.phone_no },
       next_milestone: MILESTONE_ORDER[MILESTONE_ORDER.indexOf(trip.trip_milestone) + 1] || null,
     },
@@ -401,6 +407,11 @@ router.post('/trips/:tripId/status', requireProvider, asyncRoute(async (req, res
     body: messaging.templates.statusUpdate({ booking, milestone: trip_milestone, etaMinutes: trip.eta_minutes }).body,
     eventType: trip_milestone,
     bookingId: trip.booking_id,
+    // ARRIVED is the one the patient has to act on - the ambulance is outside
+    // and nobody is looking at the app.
+    push: trip_milestone === 'ARRIVED'
+      ? { priority: 'high', data: { type: 'ARRIVED', booking_id: trip.booking_id } }
+      : null,
   });
 
   const patient = db.prepare('SELECT phone_no FROM users WHERE user_id = ?').get(booking.user_id);

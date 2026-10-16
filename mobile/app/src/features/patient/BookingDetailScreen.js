@@ -86,7 +86,7 @@ export default function BookingDetailScreen({ route }) {
 
         <View style={{ marginTop: spacing.md }}>
           <MapPanel
-            markers={[{ latitude: b.latitude, longitude: b.longitude, color: colors.accent, label: 'Pickup' }]}
+            markers={[{ latitude: b.latitude, longitude: b.longitude, color: colors.accent, label: 'Pickup', icon: '📍' }]}
             height={170}
           />
         </View>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Linking, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../../lib/api';
 import { getSocket, useResync, useSocketEvent } from '../../lib/socket';
@@ -7,8 +7,8 @@ import { MILESTONE_STEPS } from '../../lib/config';
 import { confirmAction } from '../../lib/confirm';
 import { STATUS_TEXT, colors, dateTimeOf, money, radius, spacing, typo } from '../../lib/theme';
 import { Banner, Body, Button, Card, EmptyState, H2, Loading, Pill, Row, Small, StepTrail } from '../../components/ui';
+import { callCounterparty } from '../../lib/calling';
 import MapPanel from '../../components/MapPanel';
-import VoiceCallModal from '../../components/VoiceCallModal';
 
 // F.8 Live tracking and ETA, F.9 trip status updates reflected in real time.
 export default function TrackScreen({ navigation }) {
@@ -17,9 +17,6 @@ export default function TrackScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [cancelling, setCancelling] = useState(false);
-  const [callActive, setCallActive] = useState(false);
-  const [isCaller, setIsCaller] = useState(false);
-  const [incomingCall, setIncomingCall] = useState(null);
 
   const loadActive = useCallback(async () => {
     setError('');
@@ -70,20 +67,6 @@ export default function TrackScreen({ navigation }) {
 
   useSocketEvent('trip:status', () => loadActive(), [loadActive]);
 
-  useSocketEvent('call:incoming', (call) => {
-    if (call.bookingId === booking?.booking_id) {
-      setIncomingCall(call);
-      setIsCaller(false);
-      setCallActive(true);
-    }
-  }, [booking?.booking_id]);
-
-  function startVoiceCall() {
-    setIsCaller(true);
-    setIncomingCall(null);
-    setCallActive(true);
-  }
-
   async function cancel() {
     setCancelling(true);
     try {
@@ -118,9 +101,9 @@ export default function TrackScreen({ navigation }) {
   const currentIndex = MILESTONE_STEPS.findIndex((s) => s.code === (booking.trip?.trip_milestone || 'ASSIGNED'));
 
   const markers = [
-    { latitude: booking.latitude, longitude: booking.longitude, type: 'pickup', color: colors.accent, label: 'Your Pickup Point', radius: 12 },
+    { latitude: booking.latitude, longitude: booking.longitude, color: colors.accent, label: 'Pickup', icon: '📍', radius: 11 },
     ...(track?.ambulance_location
-      ? [{ ...track.ambulance_location, type: 'ambulance', color: colors.ok, label: `Ambulance (${booking.provider?.vehicle_reg_no || ''})`, radius: 12 }]
+      ? [{ ...track.ambulance_location, color: colors.ok, label: 'Ambulance', icon: '🚑', radius: 12 }]
       : []),
   ];
 
@@ -174,12 +157,11 @@ export default function TrackScreen({ navigation }) {
           <MapPanel
             markers={markers}
             route={track?.route_points || []}
-            eta={track?.trip?.eta_minutes != null ? { etaMinutes: track.trip.eta_minutes, distanceKm: track.trip.route_distance_km } : null}
-            center={booking ? [booking.latitude, booking.longitude] : null}
+            autoRoute={Boolean(!track?.route_points?.length && track?.ambulance_location)}
             height={280}
           />
           <Small style={{ marginTop: spacing.sm }}>
-            Red pin is your pickup point. Green vehicle marker is the ambulance
+            Red pin is your pickup point. Green marker is the ambulance
             {track?.ambulance_location?.gps_timestamp
               ? `, last reported ${dateTimeOf(track.ambulance_location.gps_timestamp)}`
               : ''}.
@@ -197,21 +179,22 @@ export default function TrackScreen({ navigation }) {
             <Row label="Type" value={booking.provider.ambulance_type} />
             <Row label="Rating" value={`${booking.provider.rating} ★`} />
           </View>
-          <View style={{ gap: spacing.sm, marginTop: spacing.md }}>
-            {!finished && ['ASSIGNED', 'ENROUTE', 'ARRIVED', 'ONBOARD'].includes(booking.booking_status) ? (
-              <Button
-                title="In-App Voice Call"
-                icon="🎙️"
-                onPress={startVoiceCall}
-              />
-            ) : null}
-            <Button
-              title={`Direct Phone Call (${booking.provider.phone_no})`}
-              icon="📞"
-              variant="secondary"
-              onPress={() => Linking.openURL(`tel:${booking.provider.phone_no}`)}
-            />
-          </View>
+          {/*
+            Goes through the server rather than dialling the number already in
+            this payload, so the release of a driver's number is logged like
+            every other disclosure (C.5). The dial itself is still the phone's.
+          */}
+          <Button
+            title={`Call ${booking.provider.driver_name || 'the driver'}`}
+            icon="📞"
+            variant="secondary"
+            style={{ marginTop: spacing.md }}
+            onPress={() =>
+              callCounterparty(booking.booking_id).catch((e) =>
+                Alert.alert('Could not place the call', e.message)
+              )
+            }
+          />
         </Card>
       ) : null}
 
@@ -272,16 +255,6 @@ export default function TrackScreen({ navigation }) {
       {booking.booking_status === 'FAILED' ? (
         <Button title="Try again" onPress={() => navigation.navigate('Book')} />
       ) : null}
-
-      <VoiceCallModal
-        visible={callActive}
-        onClose={() => setCallActive(false)}
-        bookingId={booking?.booking_id}
-        partnerName={booking?.provider?.driver_name || 'Ambulance Driver'}
-        partnerRole="DRIVER"
-        isCaller={isCaller}
-        incomingCallData={incomingCall}
-      />
     </ScrollView>
   );
 }

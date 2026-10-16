@@ -58,9 +58,9 @@ export default function BookingDetailScreen({ route, navigation }) {
   const canRedispatch = ['FAILED', 'REQUESTED', 'MATCHING'].includes(b.booking_status);
 
   const markers = [
-    { latitude: b.latitude, longitude: b.longitude, color: colors.accent, label: 'Pickup', radius: 11 },
+    { latitude: b.latitude, longitude: b.longitude, color: colors.accent, label: 'Pickup', icon: '📍', radius: 11 },
     ...(data.locations?.[0]
-      ? [{ latitude: data.locations[0].latitude, longitude: data.locations[0].longitude, color: colors.ok, label: 'Ambulance', radius: 11 }]
+      ? [{ latitude: data.locations[0].latitude, longitude: data.locations[0].longitude, color: colors.ok, label: 'Ambulance', icon: '🚑', radius: 11 }]
       : []),
   ];
 
@@ -98,7 +98,7 @@ export default function BookingDetailScreen({ route, navigation }) {
 
       {b.latitude != null ? (
         <Card>
-          <MapPanel markers={markers} height={220} />
+          <MapPanel markers={markers} autoRoute height={220} />
         </Card>
       ) : null}
 

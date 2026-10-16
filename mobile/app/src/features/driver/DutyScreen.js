@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
-import * as Location from 'expo-location';
+import { readPosition as readDevicePosition } from '../../lib/location';
+import { offerAlert } from '../../lib/alerts';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
@@ -41,6 +42,10 @@ function normaliseOffer(o) {
     rank_score: o.rank_score,
     offer_expiry_timestamp: o.offer_expiry_timestamp,
     booking_timestamp: o.booking_timestamp,
+    // An emergency went to every ambulance nearby at once, so this one is not
+    // reserved for this driver. Saying so changes what they do with the 45
+    // seconds: hesitating costs them the job rather than delaying it.
+    broadcast: Boolean(o.broadcast),
   };
 }
 
@@ -89,6 +94,15 @@ export default function DutyScreen({ navigation }) {
         }
         setLastPing(me.provider.last_seen_timestamp);
       }
+      // The screen's lock reads `provider` from the auth context, not from
+      // this response, so a status that has moved has to be put back there or
+      // the console stays locked against its own fresh evidence. This is what
+      // "Check again" was failing to do: it fetched the right answer and threw
+      // away the one field that mattered.
+      if (me.provider && me.provider.verification_status !== provider?.verification_status) {
+        await refreshProvider().catch(() => {});
+      }
+
       // The inbox is only reachable once the vehicle is verified.
       if (me.provider?.verification_status === 'VERIFIED') {
         const r = await api.get('/api/provider/offers');
@@ -99,7 +113,7 @@ export default function DutyScreen({ navigation }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [provider?.verification_status, refreshProvider]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
   useResync(load, [load]);
@@ -108,10 +122,23 @@ export default function DutyScreen({ navigation }) {
   useSocketEvent('offer:new', (payload) => {
     const offer = normaliseOffer(payload);
     setOffers((prev) => [offer, ...prev.filter((o) => o.assignment_id !== offer.assignment_id)]);
+
+    // The card appearing is not an alert: a driver is not watching the screen,
+    // and the offer expires in 45 seconds. This raises a real notification
+    // from the device itself - banner, sound, vibration - which needs no push
+    // service and so works in this build today.
+    //
+    // It only fires while the app is running, because the socket that carried
+    // the offer dies with the process. Reaching a closed app is what FCM is
+    // for.
+    offerAlert(offer);
   }, []);
 
-  useSocketEvent('offer:closed', ({ assignment_id }) => {
+  useSocketEvent('offer:closed', ({ assignment_id, result }) => {
     setOffers((prev) => prev.filter((o) => o.assignment_id !== assignment_id));
+    // On an emergency several drivers hold the same offer, so one of them will
+    // see their card vanish mid-countdown. Say why, or it looks like a fault.
+    if (result === 'TAKEN') setNotice('Another ambulance accepted that emergency first.');
   }, []);
 
   useSocketEvent('booking:cancelled', ({ booking_id, reason }) => {
@@ -166,27 +193,17 @@ export default function DutyScreen({ navigation }) {
    * loop runs every 20 seconds, and prompting on each pass would either nag the
    * driver or, once they have refused, throw on every tick for nothing.
    */
-  const ensurePermission = useCallback(async () => {
-    const held = await Location.getForegroundPermissionsAsync();
-    if (held.granted) return true;
-    if (!held.canAskAgain) return false;
-    const asked = await Location.requestForegroundPermissionsAsync();
-    return asked.granted;
-  }, []);
-
   const readPosition = useCallback(async () => {
-    if (!(await ensurePermission())) {
-      setGpsDenied(true);
-      throw new Error('Location permission was declined. Tap the map below to set your position instead.');
+    try {
+      const pos = await readDevicePosition();
+      setGpsDenied(false);
+      return pos;
+    } catch (err) {
+      // A refusal is a state the screen shows; everything else is a message.
+      if (err.code === 'DENIED') setGpsDenied(true);
+      throw err;
     }
-    setGpsDenied(false);
-    const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-    return {
-      latitude: Number(pos.coords.latitude.toFixed(6)),
-      longitude: Number(pos.coords.longitude.toFixed(6)),
-      speed_kmph: pos.coords.speed != null && pos.coords.speed >= 0 ? Number((pos.coords.speed * 3.6).toFixed(1)) : undefined,
-    };
-  }, [ensurePermission]);
+  }, []);
 
   const sendPing = useCallback(async (coords) => {
     const body = coords || positionRef.current;
@@ -339,7 +356,7 @@ export default function DutyScreen({ navigation }) {
   }
 
   const markers = position
-    ? [{ ...position, color: onDuty ? colors.ok : colors.muted, label: 'You', radius: 11 }]
+    ? [{ ...position, color: onDuty ? colors.ok : colors.muted, label: 'You', icon: '🚑', radius: 11 }]
     : [];
 
   return (
@@ -408,14 +425,29 @@ export default function DutyScreen({ navigation }) {
         offers.map((offer) => {
           const left = secondsLeft(offer);
           return (
-            <Card key={offer.assignment_id} style={{ borderColor: colors.accent, borderWidth: 2 }}>
+            <Card
+              key={offer.assignment_id}
+              style={{
+                borderColor: offer.broadcast ? colors.danger : colors.accent,
+                borderWidth: offer.broadcast ? 3 : 2,
+              }}
+            >
               <View style={styles.headRow}>
-                <Pill label={`${offer.ambulance_type} REQUEST`} tone={colors.accent} />
+                <Pill
+                  label={offer.broadcast ? '🚨 EMERGENCY' : `${offer.ambulance_type} REQUEST`}
+                  tone={offer.broadcast ? colors.danger : colors.accent}
+                />
                 <View style={styles.countdown}>
                   <Text style={styles.countdownValue}>{left}</Text>
                   <Small style={typo.tiny}>sec</Small>
                 </View>
               </View>
+
+              {offer.broadcast ? (
+                <Small style={{ marginTop: spacing.sm, color: colors.danger, fontWeight: '700' }}>
+                  Sent to every ambulance nearby — first to accept takes it.
+                </Small>
+              ) : null}
 
               <H2 style={{ marginTop: spacing.sm }}>
                 {offer.address_text || `${offer.latitude}, ${offer.longitude}`}
@@ -433,9 +465,10 @@ export default function DutyScreen({ navigation }) {
                 <View style={{ marginTop: spacing.md }}>
                   <MapPanel
                     markers={[
-                      { latitude: offer.latitude, longitude: offer.longitude, color: colors.accent, label: 'Pickup', radius: 11 },
+                      { latitude: offer.latitude, longitude: offer.longitude, color: colors.accent, label: 'Pickup', icon: '📍', radius: 11 },
                       ...markers,
                     ]}
+                    autoRoute
                     height={180}
                   />
                 </View>

@@ -148,90 +148,15 @@ export function StepTrail({ steps, currentIndex }) {
   );
 }
 
-/** Password strength evaluation and visual indicator (DBIM compliant) */
-export function PasswordStrengthMeter({ password = '' }) {
-  const p = String(password || '');
-  if (!p) return null;
-
-  const checks = [
-    { label: '8+ chars', pass: p.length >= 8 },
-    { label: 'Uppercase', pass: /[A-Z]/.test(p) },
-    { label: 'Lowercase', pass: /[a-z]/.test(p) },
-    { label: 'Number', pass: /[0-9]/.test(p) },
-    { label: 'Symbol', pass: /[^A-Za-z0-9]/.test(p) },
-  ];
-
-  const passCount = checks.filter(c => c.pass).length;
-  // Score 0 to 4
-  const score = Math.min(4, Math.max(0, passCount <= 1 ? (p.length < 6 ? 0 : 1) : passCount - 1));
-
-  const config = [
-    { label: 'Very Weak', color: colors.accent },
-    { label: 'Weak', color: '#E65100' },
-    { label: 'Fair', color: colors.warn },
-    { label: 'Good', color: colors.info },
-    { label: 'Strong', color: colors.ok },
-  ][score];
-
-  return (
-    <View style={{ marginTop: -spacing.xs, marginBottom: spacing.md }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-        <Text style={[typo.tiny, { color: colors.muted, fontWeight: '600' }]}>PASSWORD STRENGTH</Text>
-        <Text style={[typo.tiny, { color: config.color, fontWeight: '700' }]}>{config.label}</Text>
-      </View>
-      <View style={{ flexDirection: 'row', gap: 6, marginBottom: 8 }}>
-        {[0, 1, 2, 3].map((idx) => (
-          <View
-            key={idx}
-            style={{
-              flex: 1,
-              height: 5,
-              borderRadius: 3,
-              backgroundColor: idx <= score ? config.color : colors.line,
-            }}
-          />
-        ))}
-      </View>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-        {checks.map((chk, i) => (
-          <View
-            key={i}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              backgroundColor: chk.pass ? `${colors.ok}18` : colors.surface2,
-              paddingHorizontal: 8,
-              paddingVertical: 3,
-              borderRadius: 4,
-            }}
-          >
-            <Text style={{ fontSize: 10, color: chk.pass ? colors.ok : colors.muted, marginRight: 4, fontWeight: '700' }}>
-              {chk.pass ? '✓' : '•'}
-            </Text>
-            <Text style={{ fontSize: 11, color: chk.pass ? colors.text : colors.muted }}>
-              {chk.label}
-            </Text>
-          </View>
-        ))}
-      </View>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   card: {
-    backgroundColor: colors.card,
+    backgroundColor: colors.surface,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.line,
     padding: spacing.md,
     marginBottom: spacing.md,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 1,
   },
   button: {
     paddingVertical: 15,

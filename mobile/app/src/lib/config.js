@@ -14,23 +14,25 @@ import Constants from 'expo-constants';
  * user-editable override on top of this: the app should not need rebuilding
  * every time the Wi-Fi changes.
  */
-export const PRODUCTION_RENDER_URL = 'https://ambulance-booking-system-72ui.onrender.com';
-
 function resolveApiUrl() {
   const explicit = process.env.EXPO_PUBLIC_API_URL;
-  if (explicit && !explicit.includes('localhost') && !explicit.includes('127.0.0.1')) {
-    return explicit.replace(/\/$/, '');
+  if (explicit) return explicit.replace(/\/$/, '');
+
+  const API_PORT = 4000;
+
+  const hostUri =
+    Constants.expoConfig?.hostUri ||
+    Constants.expoGoConfig?.debuggerHost ||
+    Constants.manifest2?.extra?.expoClient?.hostUri;
+
+  if (hostUri) {
+    const host = hostUri.split(':')[0];
+    return `http://${host}:${API_PORT}`;
   }
 
-  // Standalone release APK running on Android device connects to Render cloud
-  if (Platform.OS === 'android' && typeof __DEV__ !== 'undefined' && !__DEV__) {
-    return PRODUCTION_RENDER_URL;
-  }
-  if (Platform.OS === 'android') {
-    return PRODUCTION_RENDER_URL;
-  }
-
-  return PRODUCTION_RENDER_URL;
+  // The Android emulator reaches the host machine through 10.0.2.2.
+  if (Platform.OS === 'android') return `http://10.0.2.2:${API_PORT}`;
+  return `http://localhost:${API_PORT}`;
 }
 
 /** The built-in default. The address actually used is `api.url`. */
@@ -53,7 +55,7 @@ export const ROLES = [
     icon: '🚑',
     roleCode: 'USER',
     accepts: ['USER'],
-    demo: 'adithya@example.in / user123',
+    demo: '9800000001 / user123',
   },
   {
     key: 'PROVIDER',
@@ -62,7 +64,7 @@ export const ROLES = [
     icon: '📟',
     roleCode: null,
     accepts: ['DRIVER', 'ORG'],
-    demo: 'suresh@example.in / driver123',
+    demo: '9700000002 / driver123',
   },
   {
     key: 'ADMIN',
@@ -71,7 +73,7 @@ export const ROLES = [
     icon: '🛰️',
     roleCode: 'ADMIN',
     accepts: ['ADMIN'],
-    demo: 'admin@abs.local / admin123',
+    demo: '9000000001 / admin123',
   },
 ];
 
@@ -82,7 +84,23 @@ export function modeForRoleCode(roleCode) {
   return ROLES.find((r) => r.accepts.includes(roleCode))?.key || null;
 }
 
+/**
+ * What a patient can ask for.
+ *
+ * EMG is not a vehicle class - no ambulance is registered as one. It means
+ * "emergency, send whatever is nearest", and the server alerts every ambulance
+ * in range at once rather than working down the ranked list one at a time.
+ * `urgent` marks it so the screen can set it apart from a considered choice
+ * between care levels.
+ */
 export const AMBULANCE_TYPES = [
+  {
+    code: 'EMG',
+    label: 'Emergency - send anything',
+    hint: 'Alerts every ambulance nearby at once. First to accept comes.',
+    icon: '🚨',
+    urgent: true,
+  },
   { code: 'BLS', label: 'Basic Life Support', hint: 'Oxygen, stretcher, trained attendant', icon: '🚑' },
   { code: 'ALS', label: 'Advanced Life Support', hint: 'Ventilator, defibrillator, paramedic', icon: '🫀' },
   { code: 'ICU', label: 'Mobile ICU', hint: 'Critical care with full monitoring', icon: '🏥' },
@@ -144,3 +162,11 @@ export const REPORT_TYPES = [
   { code: 'REVENUE', label: 'Revenue' },
   { code: 'PROVIDER_PERF', label: 'Providers' },
 ];
+
+/** Map & Geolocation services: MapTiler, Nominatim & OSRM */
+export const MAP_CONFIG = {
+  maptilerKey: process.env.EXPO_PUBLIC_MAPTILER_KEY || '6mLLgOMyLQp0DFy6CtAC',
+  nominatimUrl: process.env.EXPO_PUBLIC_NOMINATIM_URL || 'https://nominatim.openstreetmap.org',
+  osrmUrl: process.env.EXPO_PUBLIC_OSRM_URL || 'https://router.project-osrm.org',
+};
+

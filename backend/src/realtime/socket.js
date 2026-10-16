@@ -18,13 +18,10 @@ function mayViewBooking(bookingId, claims) {
     .get(bookingId);
   if (!booking) return false;
 
-  if (booking.user_id === claims.sub) return true;
-  if (claims.providerId && booking.assigned_provider_id === claims.providerId) return true;
-  if (booking.assigned_provider_id) {
-    const p = db.prepare('SELECT provider_id FROM providers WHERE user_id = ?').get(claims.sub);
-    if (p && p.provider_id === booking.assigned_provider_id) return true;
-  }
-  return false;
+  return (
+    booking.user_id === claims.sub ||
+    (Boolean(claims.providerId) && booking.assigned_provider_id === claims.providerId)
+  );
 }
 
 const roomForUser = (userId) => `user:${userId}`;
@@ -52,10 +49,27 @@ function init(httpServer) {
   });
 
   io.on('connection', (socket) => {
-    const { sub: userId, role, providerId } = socket.user;
+    const { sub: userId, role } = socket.user;
     socket.join(roomForUser(userId));
-    if (providerId) socket.join(roomForProvider(providerId));
     if (role === 'ADMIN') socket.join(ADMIN_ROOM);
+
+    // Read from the database, not from the token.
+    //
+    // A token is issued at sign-in, and a driver creates their vehicle
+    // afterwards - that is the order the app asks for them. So the token of
+    // the session that creates a profile still says there is no provider, and
+    // trusting it meant that driver never joined their own room: no dispatch
+    // offer, no verification result, nothing, until they signed out and in
+    // again and got a token that knew.
+    //
+    // Identity belongs in the token. Which provider an account owns is
+    // mutable state, and mutable state belongs where it can change.
+    const owned = db
+      .prepare('SELECT provider_id FROM providers WHERE user_id = ?')
+      .get(userId);
+    const providerId = owned?.provider_id || null;
+    if (providerId) socket.join(roomForProvider(providerId));
+    socket.user.providerId = providerId;
 
     // A booking room carries the patient's pickup address and the ambulance's
     // live position, so joining one is an authorisation decision, not a
@@ -72,55 +86,6 @@ function init(httpServer) {
 
     socket.on('booking:unsubscribe', (bookingId) => {
       if (typeof bookingId === 'string') socket.leave(roomForBooking(bookingId));
-    });
-
-    // --------------------------------------------- In-App Voice Call Signaling
-    socket.on('call:invite', (data) => {
-      const { bookingId, callerName, callerRole } = data || {};
-      if (!bookingId || !mayViewBooking(bookingId, socket.user)) return;
-      socket.to(roomForBooking(bookingId)).emit('call:incoming', {
-        bookingId,
-        callerName: callerName || 'Ambulance Contact',
-        callerRole: callerRole || role,
-        fromUserId: userId,
-      });
-    });
-
-    socket.on('call:accept', (data) => {
-      const { bookingId } = data || {};
-      if (!bookingId || !mayViewBooking(bookingId, socket.user)) return;
-      socket.to(roomForBooking(bookingId)).emit('call:accepted', {
-        bookingId,
-        byUserId: userId,
-      });
-    });
-
-    socket.on('call:reject', (data) => {
-      const { bookingId, reason } = data || {};
-      if (!bookingId || !mayViewBooking(bookingId, socket.user)) return;
-      socket.to(roomForBooking(bookingId)).emit('call:rejected', {
-        bookingId,
-        reason: reason || 'declined',
-      });
-    });
-
-    socket.on('call:signal', (data) => {
-      const { bookingId, signal } = data || {};
-      if (!bookingId || !signal || !mayViewBooking(bookingId, socket.user)) return;
-      socket.to(roomForBooking(bookingId)).emit('call:signal', {
-        bookingId,
-        signal,
-        fromUserId: userId,
-      });
-    });
-
-    socket.on('call:end', (data) => {
-      const { bookingId } = data || {};
-      if (!bookingId || !mayViewBooking(bookingId, socket.user)) return;
-      socket.to(roomForBooking(bookingId)).emit('call:ended', {
-        bookingId,
-        byUserId: userId,
-      });
     });
 
     socket.emit('connected', { userId, role, providerId: providerId || null });

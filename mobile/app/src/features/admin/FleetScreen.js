@@ -66,6 +66,7 @@ export default function FleetScreen({ navigation }) {
       longitude: v.longitude,
       color: TONE[v.availability_status] || colors.muted,
       label: `${v.vehicle_reg_no} · ${v.availability_status}`,
+      icon: '🚑',
       radius: 10,
     }));
 

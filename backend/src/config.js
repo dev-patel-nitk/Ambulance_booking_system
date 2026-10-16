@@ -19,15 +19,25 @@ const config = {
   port: int(process.env.PORT, 4000),
   corsOrigin: process.env.CORS_ORIGIN || '*',
 
+  // How many accounts one address may create in an hour (NF.3). Configurable
+  // because a test suite legitimately creates more accounts in a minute than a
+  // device ever should in an hour, and because a lab demonstration on one
+  // shared network is a single address to this limiter.
+  registerLimitPerHour: int(process.env.REGISTER_LIMIT_PER_HOUR, 10),
+
   jwtSecret: process.env.JWT_SECRET || 'dev-only-secret-change-me',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '24h',
-  exposeOtp: bool(process.env.EXPOSE_OTP_IN_RESPONSE, false),
+  exposeOtp: bool(process.env.EXPOSE_OTP_IN_RESPONSE, true),
 
   dispatch: {
     offerTimeoutSeconds: int(process.env.OFFER_TIMEOUT_SECONDS, 45),
     maxRetries: int(process.env.MAX_DISPATCH_RETRIES, 5),
     searchRadiusKm: int(process.env.SEARCH_RADIUS_KM, 15),
     providerStaleMinutes: int(process.env.PROVIDER_STALE_MINUTES, 15),
+    // An EMG request is offered to every nearby ambulance at once. The cap
+    // bounds one request to a sane number of alerts in a dense area; the
+    // candidates are ranked first, so the cap keeps the best of them.
+    broadcastLimit: int(process.env.BROADCAST_LIMIT, 10),
   },
 
   // Recovery sweep (NF.1: a request must not be left unserved; C.6: driver
@@ -59,29 +69,44 @@ const config = {
     countryCode: process.env.DEFAULT_COUNTRY_CODE || '91',
   },
 
-  sms: {
-    provider: (process.env.SMS_PROVIDER || (process.env.FAST2SMS_API_KEY ? 'fast2sms' : 'mock')).toLowerCase(),
-    fast2smsApiKey: process.env.FAST2SMS_API_KEY || '',
+  // F.14 - Expo push. Nothing is required for a project using Expo's own push
+  // service: the device token is both the address and the authorisation. Set
+  // EXPO_ACCESS_TOKEN only once push security is enabled for the project.
+  push: {
+    accessToken: process.env.EXPO_ACCESS_TOKEN || '',
+    // Push has no credentials to detect, so unlike WhatsApp and email the mock
+    // has to be asked for. Tests set it so the suite makes no outbound call,
+    // and it lets a demo show the alert log without a real handset.
+    mock: bool(process.env.PUSH_MOCK, false),
   },
 
+  // Verification codes by email (F.1). Phone stays the account identifier - the
+  // data dictionary makes phone_no NOT NULL UNIQUE and the driver has to be
+  // able to ring the patient - so this is a delivery channel, not an identity.
+  // Leave EMAIL_HOST empty to run the mock transport, which logs the code and
+  // writes the same `messages` row the SMTP path does.
   email: {
-    provider: (process.env.EMAIL_PROVIDER || 'smtp').toLowerCase(),
-    webhookUrl: process.env.EMAIL_WEBHOOK_URL || '',
-    resendApiKey: process.env.RESEND_API_KEY || '',
+    // brevo | smtp | mock. Resolved rather than read raw: naming a provider
+    // whose credentials are absent would otherwise fail every send silently
+    // at run time instead of being obvious at boot.
+    provider: (process.env.EMAIL_PROVIDER || '').toLowerCase(),
+    // Brevo's HTTP API. Preferred over SMTP for a hosted deployment, because
+    // an outbound HTTPS call works everywhere an SMTP port may not.
     brevoApiKey: process.env.BREVO_API_KEY || '',
-    brevoSenderEmail: process.env.BREVO_SENDER_EMAIL || process.env.SMTP_USER || 'devjipatelop@gmail.com',
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: int(process.env.SMTP_PORT, 587),
-    secure: bool(process.env.SMTP_SECURE, false),
-    user: process.env.SMTP_USER || '',
-    pass: process.env.SMTP_PASS || '',
-    from: process.env.EMAIL_FROM || (process.env.SMTP_USER ? `Ambulance System <${process.env.SMTP_USER}>` : ''),
-    otpChannel: (process.env.OTP_CHANNEL || (process.env.SMTP_USER ? 'email' : 'sms')).toLowerCase(),
+    host: process.env.EMAIL_HOST || '',
+    port: int(process.env.EMAIL_PORT, 587),
+    // Port 465 is implicit TLS; 587 upgrades with STARTTLS, which nodemailer
+    // does on its own when `secure` is false.
+    secure: bool(process.env.EMAIL_SECURE, false),
+    user: process.env.EMAIL_USER || '',
+    pass: process.env.EMAIL_PASS || '',
+    from: process.env.EMAIL_FROM || 'Ambulance Booking System <no-reply@nitk.ac.in>',
   },
 
   maps: {
     provider: (process.env.MAPS_PROVIDER || 'osm').toLowerCase(),
     googleKey: process.env.GOOGLE_MAPS_API_KEY || '',
+    maptilerKey: process.env.MAPTILER_API_KEY || '6mLLgOMyLQp0DFy6CtAC',
     nominatimUrl: process.env.NOMINATIM_URL || 'https://nominatim.openstreetmap.org',
     osrmUrl: process.env.OSRM_URL || 'https://router.project-osrm.org',
     contactEmail: process.env.GEO_CONTACT_EMAIL || 'team16@nitk.edu.in',

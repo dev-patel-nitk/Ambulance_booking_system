@@ -16,17 +16,27 @@ const maps = require('./services/maps');
 const messaging = require('./services/messaging');
 const { ValidationError } = require('./utils/validate');
 
-const { seed } = require('./db/seed');
 migrate();
-try {
-  const count = db.prepare('SELECT COUNT(*) AS c FROM users').get()?.c || 0;
-  if (count === 0) {
-    console.log('[db] Fresh database detected. Seeding initial accounts...');
-    seed();
-  }
-} catch (e) {
-  console.error('[db] Auto-seed check:', e.message);
+
+/**
+ * Seeds an empty database on boot.
+ *
+ * A hosted container on a free plan has no persistent disk: the filesystem is
+ * rebuilt on every deploy and every wake from idle, which takes the database
+ * with it. Without this the service would come back up with no fare rules, no
+ * demo accounts and no administrator, and nobody could sign in to find out why.
+ *
+ * It is guarded on the table being empty, so it can never overwrite real data -
+ * on a disk that does persist, this runs once and never again.
+ */
+function seedIfEmpty() {
+  if (config.env === 'test') return;                 // the harness seeds itself
+  if (db.prepare('SELECT COUNT(*) AS n FROM users').get().n > 0) return;
+
+  console.log('[db] empty database - seeding reference data and demo accounts');
+  require('./db/seed').seed();
 }
+seedIfEmpty();
 
 const app = express();
 app.set('trust proxy', 1);
@@ -90,6 +100,12 @@ server.listen(config.port, () => {
   console.log(`  Database          ${DB_FILE}`);
   console.log(`  Maps provider     ${maps.provider()}`);
   console.log(`  WhatsApp          ${messaging.usingCloudApi() ? 'Cloud API' : 'mock transport (messages printed + stored)'}`);
+  const mail = messaging.emailTransport();
+  console.log(`  Email             ${
+    mail === 'brevo' ? 'Brevo HTTP API'
+    : mail === 'smtp' ? `SMTP ${config.email.host}:${config.email.port}`
+    : 'mock transport (codes printed + stored)'}`);
+  console.log(`  Push              ${config.push.accessToken ? 'Expo (authenticated)' : 'Expo'}`);
   console.log(`  Offer timeout     ${config.dispatch.offerTimeoutSeconds}s, up to ${config.dispatch.maxRetries} candidates\n`);
   dispatch.resumePendingOffers();
   watchdog.start();

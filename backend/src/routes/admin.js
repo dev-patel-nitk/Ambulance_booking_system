@@ -13,6 +13,7 @@ const { staleCutoffIso, dispatchablePredicate } = require('../services/availabil
 const { localDay, localHour, todayLocal, daysAgoLocal, offsetLabel } = require('../utils/localDate');
 const notifications = require('../services/notifications');
 const messaging = require('../services/messaging');
+const config = require('../config');
 const sockets = require('../realtime/socket');
 
 const router = express.Router();
@@ -90,7 +91,7 @@ router.get('/providers', asyncRoute(async (req, res) => {
   }
   if (req.query.ambulance_type) {
     filters.push('p.ambulance_type = ?');
-    params.push(v.oneOf(req.query.ambulance_type, v.AMBULANCE_TYPES, 'ambulance_type'));
+    params.push(v.oneOf(req.query.ambulance_type, v.REQUEST_TYPES, 'ambulance_type'));
   }
   if (req.query.availability_status) {
     filters.push('p.availability_status = ?');
@@ -204,7 +205,7 @@ router.get('/bookings', asyncRoute(async (req, res) => {
   }
   if (req.query.ambulance_type) {
     filters.push('b.ambulance_type = ?');
-    params.push(v.oneOf(req.query.ambulance_type, v.AMBULANCE_TYPES, 'ambulance_type'));
+    params.push(v.oneOf(req.query.ambulance_type, v.REQUEST_TYPES, 'ambulance_type'));
   }
   if (req.query.from_date) {
     filters.push(`${localDay('b.booking_timestamp')} >= ?`);
@@ -296,6 +297,20 @@ router.post('/bookings/:bookingId/cancel', asyncRoute(async (req, res) => {
     bookingId: booking.booking_id,
   });
 
+  // The patient did not do this, so they get no feedback from their own
+  // actions - telling them out of band is the only way they find out.
+  const patient = db.prepare('SELECT phone_no FROM users WHERE user_id = ?').get(booking.user_id);
+  if (patient) {
+    messaging
+      .sendWhatsApp({
+        phoneNo: patient.phone_no,
+        bookingId: booking.booking_id,
+        templateId: config.whatsapp.templates.status,
+        ...messaging.templates.cancelledByControlRoom({ booking, reason }),
+      })
+      .catch(() => {});
+  }
+
   const updated = dispatch.getBooking(booking.booking_id);
   dispatch.broadcastBooking(updated);
   res.json({ message: 'Booking cancelled', booking: dispatch.publicBooking(updated) });
@@ -381,7 +396,9 @@ router.post('/users/:userId/status', asyncRoute(async (req, res) => {
 router.post('/admins', asyncRoute(async (req, res) => {
   const full_name = v.name(req.body.full_name);
   const phone_no = v.phone(req.body.phone_no);
-  const password = v.password(req.body.password);
+  // A control-room account is the most valuable one in the system, so it gets
+  // the same check as everyone else rather than a laxer one for convenience.
+  const password = v.newPassword(req.body.password, 'password', { full_name, phone_no, email_id });
   if (db.prepare('SELECT 1 FROM users WHERE phone_no = ?').get(phone_no)) {
     return res.status(409).json({ error: 'An account already exists for this mobile number' });
   }

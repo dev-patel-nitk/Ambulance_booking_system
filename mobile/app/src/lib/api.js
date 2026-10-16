@@ -29,16 +29,7 @@ export function normaliseBaseUrl(input) {
 
 export async function loadBaseUrl() {
   const stored = await AsyncStorage.getItem(BASE_KEY);
-  if (stored) {
-    if (stored.includes('localhost') || stored.includes('10.0.2.2') || stored.includes('127.0.0.1')) {
-      baseUrl = DEFAULT_API_URL;
-      await AsyncStorage.removeItem(BASE_KEY);
-    } else {
-      baseUrl = stored;
-    }
-  } else {
-    baseUrl = DEFAULT_API_URL;
-  }
+  if (stored) baseUrl = stored;
   return baseUrl;
 }
 
@@ -97,11 +88,28 @@ async function authHeader() {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+/**
+ * How long to wait before giving up on a request.
+ *
+ * `fetch` has no timeout of its own: a connection that is accepted and then
+ * never answered - a phone that has moved between networks, a host that is
+ * black-holing packets, a free-tier container waking from sleep - leaves the
+ * promise pending for ever. Whatever was awaiting it then spins for ever too,
+ * which is what a driver sees as a button that never stops loading.
+ *
+ * Generous rather than snappy, because a sleeping Render instance genuinely
+ * takes most of a minute to answer its first request.
+ */
+const REQUEST_TIMEOUT_MS = 60_000;
+
 async function request(method, path, body) {
   let res;
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), REQUEST_TIMEOUT_MS);
   try {
     res = await fetch(baseUrl + path, {
       method,
+      signal: abort.signal,
       headers: {
         'Content-Type': 'application/json',
         ...(await authHeader()),
@@ -110,10 +118,18 @@ async function request(method, path, body) {
     });
   } catch (err) {
     // Constraint C.2: the app must say something useful when the network is down.
+    if (err.name === 'AbortError') {
+      throw new ApiError(
+        `The server at ${baseUrl} did not answer within a minute. It may be asleep — try again, and it should be quicker the second time.`,
+        0
+      );
+    }
     throw new ApiError(
       `Cannot reach the server at ${baseUrl}. Check the backend is running, that this phone is on the same network, and that the address above is right — you can change it on the sign-in screen.`,
       0
     );
+  } finally {
+    clearTimeout(timer);
   }
 
   const payload = await res.json().catch(() => ({}));
@@ -133,4 +149,6 @@ export const api = {
   get: (p) => request('GET', p),
   post: (p, b) => request('POST', p, b),
   patch: (p, b) => request('PATCH', p, b),
+  // Named `del` because `delete` is a reserved word.
+  del: (p, b) => request('DELETE', p, b),
 };

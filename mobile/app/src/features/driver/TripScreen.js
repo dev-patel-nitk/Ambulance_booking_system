@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Linking, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, Linking, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { callCounterparty } from '../../lib/calling';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../../lib/api';
-import { getSocket, useResync, useSocketEvent } from '../../lib/socket';
+import { useResync, useSocketEvent } from '../../lib/socket';
 import { confirmAction } from '../../lib/confirm';
+import { readPosition } from '../../lib/location';
 import { DRIVER_MILESTONES } from '../../lib/config';
 import { colors, dateTimeOf, money, spacing } from '../../lib/theme';
 import { Banner, Button, Card, EmptyState, H2, Loading, Pill, Row, Small, StepTrail } from '../../components/ui';
 import MapPanel from '../../components/MapPanel';
-import VoiceCallModal from '../../components/VoiceCallModal';
 
 /**
  * F.9 - the trip itself.
@@ -25,9 +26,20 @@ export default function TripScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [callActive, setCallActive] = useState(false);
-  const [isCaller, setIsCaller] = useState(false);
-  const [incomingCall, setIncomingCall] = useState(null);
+  const [driverPos, setDriverPos] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    readPosition()
+      .then((p) => { if (active) setDriverPos(p); })
+      .catch(() => {});
+    const interval = setInterval(() => {
+      readPosition()
+        .then((p) => { if (active) setDriverPos(p); })
+        .catch(() => {});
+    }, 15000);
+    return () => { active = false; clearInterval(interval); };
+  }, []);
 
   const load = useCallback(async () => {
     setError('');
@@ -49,28 +61,6 @@ export default function TripScreen({ navigation }) {
     setError(`This booking was cancelled: ${reason}`);
     load();
   }, [load]);
-
-  // Subscribe to booking room to receive updates and voice calls
-  useEffect(() => {
-    const socket = getSocket();
-    if (!socket || !trip) return undefined;
-    socket.emit('booking:subscribe', trip.booking_id);
-    return () => socket.emit('booking:unsubscribe', trip.booking_id);
-  }, [trip?.booking_id]);
-
-  useSocketEvent('call:incoming', (call) => {
-    if (call.bookingId === trip?.booking_id) {
-      setIncomingCall(call);
-      setIsCaller(false);
-      setCallActive(true);
-    }
-  }, [trip?.booking_id]);
-
-  function startVoiceCall() {
-    setIsCaller(true);
-    setIncomingCall(null);
-    setCallActive(true);
-  }
 
   async function advance(next) {
     setError('');
@@ -143,6 +133,11 @@ export default function TripScreen({ navigation }) {
     ? { latitude: trip.drop_latitude, longitude: trip.drop_longitude, label: 'Drop', color: colors.info }
     : { latitude: trip.latitude, longitude: trip.longitude, label: 'Pickup', color: colors.accent };
 
+  const markers = [
+    ...(driverPos ? [{ latitude: driverPos.latitude, longitude: driverPos.longitude, color: colors.ok, label: 'Ambulance', icon: '🚑', radius: 12 }] : []),
+    { latitude: target.latitude, longitude: target.longitude, color: target.color, label: target.label, icon: onboard ? '🏥' : '📍', radius: 11 },
+  ];
+
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.bg }}
@@ -171,8 +166,10 @@ export default function TripScreen({ navigation }) {
 
       <Card>
         <MapPanel
-          markers={[{ latitude: target.latitude, longitude: target.longitude, color: target.color, label: target.label, radius: 11 }]}
-          height={240}
+          markers={markers}
+          route={trip.route_points || []}
+          autoRoute={Boolean(!trip.route_points?.length && driverPos)}
+          height={260}
         />
         <Button
           title={`Navigate to ${target.label.toLowerCase()}`}
@@ -196,23 +193,22 @@ export default function TripScreen({ navigation }) {
           {trip.notes ? <Row label="Notes" value={trip.notes} /> : null}
           <Row label="Requested" value={dateTimeOf(trip.booking_timestamp)} />
         </View>
-        <View style={{ gap: spacing.sm, marginTop: spacing.md }}>
-          {['ASSIGNED', 'ENROUTE', 'ARRIVED', 'ONBOARD'].includes(trip.trip_milestone) ? (
-            <Button
-              title="In-App Voice Call"
-              icon="🎙️"
-              onPress={startVoiceCall}
-            />
-          ) : null}
-          {trip.patient?.phone_no ? (
-            <Button
-              title={`Direct Phone Call (${trip.patient.phone_no})`}
-              icon="📞"
-              variant="secondary"
-              onPress={() => Linking.openURL(`tel:${trip.patient.phone_no}`)}
-            />
-          ) : null}
-        </View>
+        {/*
+          The crew's own reason to call is almost always "we are outside and
+          cannot see you", so this sits with the patient's details rather than
+          buried under the milestone buttons.
+        */}
+        <Button
+          title={`Call ${trip.patient?.full_name || 'the patient'}`}
+          icon="📞"
+          variant="secondary"
+          style={{ marginTop: spacing.md }}
+          onPress={() =>
+            callCounterparty(trip.booking_id).catch((e) =>
+              Alert.alert('Could not place the call', e.message)
+            )
+          }
+        />
       </Card>
 
       {/* ------------------------------------------------- F.9 milestones */}
@@ -247,16 +243,6 @@ export default function TripScreen({ navigation }) {
       <Small style={{ textAlign: 'center', marginTop: spacing.md, lineHeight: 18 }}>
         Each step is sent to the patient and the control room the moment you tap it.
       </Small>
-
-      <VoiceCallModal
-        visible={callActive}
-        onClose={() => setCallActive(false)}
-        bookingId={trip?.booking_id}
-        partnerName={trip?.patient?.full_name || 'Patient'}
-        partnerRole="USER"
-        isCaller={isCaller}
-        incomingCallData={incomingCall}
-      />
     </ScrollView>
   );
 }

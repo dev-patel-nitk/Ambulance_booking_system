@@ -81,63 +81,84 @@ test('E.164 formatting for the Cloud API', async (t) => {
   });
 });
 
-test('10-digit formatting for Fast2SMS OTP', async (t) => {
-  await t.test('extracts 10 digits from numbers with +91 country code', () => {
-    assert.equal(messaging.to10Digits('+919876543210'), '9876543210');
-  });
-
-  await t.test('extracts 10 digits from numbers with 91 prefix', () => {
-    assert.equal(messaging.to10Digits('919876543210'), '9876543210');
-  });
-
-  await t.test('leaves a clean 10-digit number untouched', () => {
-    assert.equal(messaging.to10Digits('9876543210'), '9876543210');
-  });
-
-  await t.test('strips spaces, dashes and special characters', () => {
-    assert.equal(messaging.to10Digits('+91 (987) 654-3210'), '9876543210');
-  });
-});
-
-test('Brevo HTTPS email delivery transport', async (t) => {
-  await t.test('sends email via Brevo API when brevoApiKey is configured', async () => {
-    const config = require('../../src/config');
-    const originalKey = config.email.brevoApiKey;
-    const originalFetch = global.fetch;
-
-    let capturedUrl = null;
-    let capturedOptions = null;
-
-    try {
-      config.email.brevoApiKey = 'test-brevo-api-key';
-      global.fetch = async (url, options) => {
-        capturedUrl = url;
-        capturedOptions = options;
-        return {
-          ok: true,
-          status: 201,
-          json: async () => ({ messageId: '<test-brevo-msg-id@brevo.com>' }),
-        };
-      };
-
-      const result = await messaging.sendEmail({
-        to: 'user@example.com',
-        subject: 'Test Subject',
-        html: '<p>Test</p>',
-        text: 'Test',
-      });
-
-      assert.equal(capturedUrl, 'https://api.brevo.com/v3/smtp/email');
-      assert.equal(capturedOptions.headers['api-key'], 'test-brevo-api-key');
-      const payload = JSON.parse(capturedOptions.body);
-      assert.equal(payload.to[0].email, 'user@example.com');
-      assert.equal(payload.subject, 'Test Subject');
-      assert.equal(result.transport, 'brevo');
-      assert.equal(result.messageId, '<test-brevo-msg-id@brevo.com>');
-    } finally {
-      config.email.brevoApiKey = originalKey;
-      global.fetch = originalFetch;
+test('the email transport is resolved from what is configured, not what is asked for', async (t) => {
+  // Naming a provider whose key is absent must not leave every send failing
+  // silently at run time; it falls back to the mock, which at least records.
+  const resolve = (env) => {
+    const saved = { ...process.env };
+    Object.assign(process.env, {
+      EMAIL_PROVIDER: '', BREVO_API_KEY: '', EMAIL_HOST: '', EMAIL_USER: '', ...env,
+    });
+    // config and messaging both read the environment at load time.
+    for (const k of Object.keys(require.cache)) {
+      if (k.includes('config.js') || k.includes('messaging.js')) delete require.cache[k];
     }
+    const result = require('../../src/services/messaging').emailTransport();
+    process.env = saved;
+    for (const k of Object.keys(require.cache)) {
+      if (k.includes('config.js') || k.includes('messaging.js')) delete require.cache[k];
+    }
+    return result;
+  };
+
+  await t.test('nothing configured falls back to the mock', () => {
+    assert.equal(resolve({}), 'mock');
+  });
+
+  await t.test('a Brevo key alone selects Brevo', () => {
+    assert.equal(resolve({ BREVO_API_KEY: 'xkeysib-test' }), 'brevo');
+  });
+
+  await t.test('SMTP credentials alone select SMTP', () => {
+    assert.equal(resolve({ EMAIL_HOST: 'smtp.gmail.com', EMAIL_USER: 'a@b.com' }), 'smtp');
+  });
+
+  await t.test('Brevo wins when both are available, because HTTPS travels further', () => {
+    assert.equal(
+      resolve({ BREVO_API_KEY: 'k', EMAIL_HOST: 'smtp.gmail.com', EMAIL_USER: 'a@b.com' }),
+      'brevo'
+    );
+  });
+
+  await t.test('an explicit choice is honoured over the other one', () => {
+    assert.equal(
+      resolve({ EMAIL_PROVIDER: 'smtp', BREVO_API_KEY: 'k', EMAIL_HOST: 'h', EMAIL_USER: 'u' }),
+      'smtp'
+    );
+  });
+
+  await t.test('a provider named without credentials cannot be selected', () => {
+    assert.equal(resolve({ EMAIL_PROVIDER: 'brevo' }), 'mock');
+  });
+
+  await t.test('mock can be forced even when a provider is configured', () => {
+    assert.equal(resolve({ EMAIL_PROVIDER: 'mock', BREVO_API_KEY: 'k' }), 'mock');
   });
 });
 
+test('the sender address is split for Brevo', async (t) => {
+  await t.test('a named sender', () => {
+    assert.deepEqual(
+      messaging.parseFrom('Ambulance Booking System <no-reply@nitk.ac.in>'),
+      { name: 'Ambulance Booking System', email: 'no-reply@nitk.ac.in' }
+    );
+  });
+
+  await t.test('a bare address', () => {
+    assert.deepEqual(messaging.parseFrom('no-reply@nitk.ac.in'), { email: 'no-reply@nitk.ac.in' });
+  });
+});
+
+test('a destination is masked before it goes back in a response', async (t) => {
+  await t.test('an email keeps only its first and last local character', () => {
+    assert.equal(messaging.maskDestination('adithya.shyam@gmail.com', 'EMAIL'), 'a***********m@gmail.com');
+  });
+
+  await t.test('a very short local part still gets masked', () => {
+    assert.equal(messaging.maskDestination('ab@x.com', 'EMAIL'), 'a*@x.com');
+  });
+
+  await t.test('a phone keeps the last four digits, as a bank statement would', () => {
+    assert.equal(messaging.maskDestination('9876543210', 'WHATSAPP'), '98****3210');
+  });
+});

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import * as Location from 'expo-location';
+import { readPosition as readDevicePosition } from '../../lib/location';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../../lib/api';
 import { useResync, useSocketEvent } from '../../lib/socket';
@@ -9,7 +9,6 @@ import { AMBULANCE_TYPES } from '../../lib/config';
 import { colors, money, radius, spacing, typo } from '../../lib/theme';
 import { Banner, Body, Button, Card, Field, H2, Loading, Pill, Small } from '../../components/ui';
 import MapPanel from '../../components/MapPanel';
-import { decodePolyline } from '../../lib/geo';
 
 // F.3 Select ambulance type and place booking, F.4 Capture pickup location.
 export default function BookScreen({ navigation }) {
@@ -26,8 +25,6 @@ export default function BookScreen({ navigation }) {
   const [patientName, setPatientName] = useState('');
   const [nearby, setNearby] = useState([]);
   const [estimate, setEstimate] = useState(null);
-  const [routePoints, setRoutePoints] = useState([]);
-  const [routeInfo, setRouteInfo] = useState(null);
   const [error, setError] = useState('');
   const [placing, setPlacing] = useState(false);
 
@@ -52,20 +49,19 @@ export default function BookScreen({ navigation }) {
     setLocating(true);
     setError('');
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        setError('Location permission was declined. Type an address or tap the map to drop a pin instead.');
-        return;
-      }
-      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      const coords = {
-        latitude: Number(pos.coords.latitude.toFixed(6)),
-        longitude: Number(pos.coords.longitude.toFixed(6)),
-      };
+      // Times out and falls back to a cached fix rather than waiting for one
+      // that may never come - this runs on mount, so a hang here is a screen
+      // that never finishes loading.
+      const pos = await readDevicePosition();
+      const coords = { latitude: pos.latitude, longitude: pos.longitude };
       const rev = await api.get(`/api/geo/reverse?lat=${coords.latitude}&lng=${coords.longitude}`);
       setPickup({ ...coords, address_text: rev.location.address_text, pincode: rev.location.pincode });
     } catch (e) {
-      setError(e.message || 'Could not read your location');
+      setError(
+        e.code === 'DENIED'
+          ? 'Location permission was declined. Type an address or tap the map to drop a pin instead.'
+          : e.message || 'Could not read your location'
+      );
     } finally {
       setLocating(false);
     }
@@ -82,39 +78,14 @@ export default function BookScreen({ navigation }) {
       .catch(() => setNearby([]));
   }, [pickup]);
 
-  // Calculate road route and ETA between pickup and nearest ambulance
-  useEffect(() => {
-    if (!pickup || nearby.length === 0) {
-      setRoutePoints([]);
-      setRouteInfo(null);
-      return;
-    }
-    const nearest = nearby[0];
-    api
-      .get(`/api/geo/route?from_lat=${nearest.latitude}&from_lng=${nearest.longitude}&to_lat=${pickup.latitude}&to_lng=${pickup.longitude}`)
-      .then((r) => {
-        if (r.route?.route_polyline) {
-          setRoutePoints(decodePolyline(r.route.route_polyline));
-          setRouteInfo(r.route);
-        } else {
-          setRoutePoints([[nearest.latitude, nearest.longitude], [pickup.latitude, pickup.longitude]]);
-          setRouteInfo(r.route);
-        }
-      })
-      .catch(() => {
-        setRoutePoints([]);
-        setRouteInfo(null);
-      });
-  }, [pickup?.latitude, pickup?.longitude, nearby[0]?.provider_id]);
-
   // Indicative fare for the selected type, using the nearest ambulance distance.
   useEffect(() => {
-    const km = routeInfo?.route_distance_km ?? nearby[0]?.distance_km ?? 8;
+    const km = nearby[0]?.distance_km ?? 8;
     api
       .post('/api/bookings/estimate', { ambulance_type: ambulanceType, distance_km: km })
       .then((r) => setEstimate({ ...r.estimate, basis_km: km }))
       .catch(() => setEstimate(null));
-  }, [ambulanceType, nearby, routeInfo]);
+  }, [ambulanceType, nearby]);
 
   async function search() {
     if (!query.trim()) return;
@@ -177,14 +148,11 @@ export default function BookScreen({ navigation }) {
   }
 
   const markers = [
-    ...(pickup ? [{ ...pickup, type: 'pickup', color: colors.accent, label: 'Your Pickup Point', radius: 12 }] : []),
-    ...nearby.slice(0, 10).map((a, i) => ({
-      latitude: a.latitude,
-      longitude: a.longitude,
-      type: 'ambulance',
-      color: colors.ok,
-      radius: 9,
-      label: `${a.ambulance_type} Ambulance (${a.distance_km} km away)`,
+    ...(pickup ? [{ ...pickup, color: colors.accent, label: 'Pickup', icon: '📍', radius: 11 }] : []),
+    ...nearby.slice(0, 10).map((a) => ({
+      latitude: a.latitude, longitude: a.longitude, color: colors.ok, radius: 8,
+      label: `${a.ambulance_type} · ${a.distance_km} km`,
+      icon: '🚑',
     })),
   ];
 
@@ -201,52 +169,28 @@ export default function BookScreen({ navigation }) {
       <Card>
         <H2>Where are you?</H2>
         <Small style={{ marginTop: 4, marginBottom: spacing.md }}>
-          Tap the map to set your location, or search an address below.
+          Tap the map to move the pin, or search for a landmark.
         </Small>
 
         <MapPanel
           markers={markers}
-          route={routePoints}
-          eta={routeInfo ? { etaMinutes: routeInfo.eta_minutes, distanceKm: routeInfo.route_distance_km } : null}
-          center={pickup ? [pickup.latitude, pickup.longitude] : null}
-          height={260}
-          onPick={async (lat, lng) => {
+          height={240}
+          showSearch
+          onPick={async (lat, lng, info) => {
             const coords = { latitude: Number(lat.toFixed(6)), longitude: Number(lng.toFixed(6)) };
-            setPickup({ ...coords, address_text: 'Locating address…' });
-            try {
-              const rev = await api.get(`/api/geo/reverse?lat=${coords.latitude}&lng=${coords.longitude}`);
-              setPickup({ ...coords, address_text: rev.location.address_text || `${coords.latitude}, ${coords.longitude}`, pincode: rev.location.pincode });
-            } catch {
-              setPickup({ ...coords, address_text: `${coords.latitude}, ${coords.longitude}` });
+            if (info && info.address) {
+              setPickup({ ...coords, address_text: info.address, pincode: info.pincode });
+            } else {
+              setPickup({ ...coords, address_text: 'Locating address…' });
+              try {
+                const rev = await api.get(`/api/geo/reverse?lat=${coords.latitude}&lng=${coords.longitude}`);
+                setPickup({ ...coords, address_text: rev.location.address_text, pincode: rev.location.pincode });
+              } catch {
+                setPickup({ ...coords, address_text: `${coords.latitude}, ${coords.longitude}` });
+              }
             }
           }}
         />
-
-        {routeInfo ? (
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              backgroundColor: `${colors.info}12`,
-              borderWidth: 1,
-              borderColor: `${colors.info}33`,
-              borderRadius: radius.sm,
-              padding: spacing.sm + 2,
-              marginTop: spacing.sm,
-              gap: 8,
-            }}
-          >
-            <Text style={{ fontSize: 20 }}>🚑</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 13.5, fontWeight: '700', color: colors.text }}>
-                Estimated Arrival: ~{routeInfo.eta_minutes} mins ({routeInfo.route_distance_km} km away)
-              </Text>
-              <Text style={{ fontSize: 11.5, color: colors.muted }}>
-                Calculated road route to nearest available unit
-              </Text>
-            </View>
-          </View>
-        ) : null}
 
         <View style={styles.pickupRow}>
           <Text style={{ fontSize: 18 }}>📍</Text>
@@ -307,21 +251,38 @@ export default function BookScreen({ navigation }) {
 
         {AMBULANCE_TYPES.map((t) => {
           const selected = ambulanceType === t.code;
-          const count = nearby.filter((a) => a.ambulance_ambulanceType === t.code).length;
+          // An emergency can be answered by any class, so its count is every
+          // ambulance nearby rather than the ones of one kind.
+          const count = t.urgent
+            ? nearby.length
+            : nearby.filter((a) => a.ambulance_type === t.code).length;
           return (
             <Pressable
               key={t.code}
               onPress={() => setAmbulanceType(t.code)}
-              style={[styles.typeCard, selected && styles.typeCardActive]}
+              style={[
+                styles.typeCard,
+                t.urgent && styles.typeCardUrgent,
+                selected && styles.typeCardActive,
+                selected && t.urgent && styles.typeCardUrgentActive,
+              ]}
             >
               <Text style={{ fontSize: 26 }}>{t.icon}</Text>
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 15, fontWeight: '600', color: selected ? colors.white : colors.text }}>
+                <Text
+                  style={{
+                    fontSize: 15,
+                    fontWeight: t.urgent ? '800' : '600',
+                    color: selected ? colors.white : t.urgent ? colors.danger : colors.text,
+                  }}
+                >
                   {t.code} · {t.label}
                 </Text>
-                <Small numberOfLines={1}>{t.hint}</Small>
+                <Small numberOfLines={2}>{t.hint}</Small>
               </View>
-              {count > 0 ? <Pill label={`${count} free`} tone={colors.ok} /> : null}
+              {count > 0 ? (
+                <Pill label={`${count} free`} tone={t.urgent ? colors.danger : colors.ok} />
+              ) : null}
             </Pressable>
           );
         })}
@@ -425,6 +386,10 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   typeCardActive: { borderColor: colors.accent, backgroundColor: colors.surface2 },
+  // An emergency is not a considered choice between care levels, so it does
+  // not look like one.
+  typeCardUrgent: { borderColor: colors.danger, borderWidth: 1.5 },
+  typeCardUrgentActive: { borderColor: colors.danger, backgroundColor: colors.surface2 },
   fareRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5 },
   divider: { height: 1, backgroundColor: colors.line, marginVertical: spacing.sm },
 });
