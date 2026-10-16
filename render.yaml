@@ -63,8 +63,6 @@ services:
 
       - key: MAPS_PROVIDER
         value: osm
-      - key: MAPTILER_API_KEY
-        value: 6mLLgOMyLQp0DFy6CtAC
       - key: GEO_CONTACT_EMAIL
         value: team16@nitk.edu.in
 

@@ -8,7 +8,7 @@ import { useAuth } from '../../lib/auth';
 import { useResync, useSocketEvent } from '../../lib/socket';
 import { confirmAction } from '../../lib/confirm';
 import { LOCATION_PING_MS } from '../../lib/config';
-import { colors, radius, relative, spacing, typo } from '../../lib/theme';
+import { FONT, colors, radius, relative, spacing, typo } from '../../lib/theme';
 import { Banner, Button, Card, EmptyState, H2, Loading, Pill, Row, Small } from '../../components/ui';
 import MapPanel from '../../components/MapPanel';
 
@@ -38,6 +38,9 @@ function normaliseOffer(o) {
     landmark: o.pickup?.landmark ?? o.landmark,
     patient_name: o.patient_name,
     notes: o.notes,
+    doctor_name: o.doctor_name,
+    doctor_notes: o.doctor_notes,
+    nurse_required: Boolean(o.nurse_required),
     distance_km: o.distance_km,
     rank_score: o.rank_score,
     offer_expiry_timestamp: o.offer_expiry_timestamp,
@@ -356,7 +359,7 @@ export default function DutyScreen({ navigation }) {
   }
 
   const markers = position
-    ? [{ ...position, color: onDuty ? colors.ok : colors.muted, label: 'You', icon: '🚑', radius: 11 }]
+    ? [{ ...position, color: onDuty ? colors.ok : colors.muted, label: 'You', radius: 11 }]
     : [];
 
   return (
@@ -444,7 +447,7 @@ export default function DutyScreen({ navigation }) {
               </View>
 
               {offer.broadcast ? (
-                <Small style={{ marginTop: spacing.sm, color: colors.danger, fontWeight: '700' }}>
+                <Small style={{ marginTop: spacing.sm, color: colors.danger, fontFamily: FONT.bold }}>
                   Sent to every ambulance nearby — first to accept takes it.
                 </Small>
               ) : null}
@@ -461,14 +464,44 @@ export default function DutyScreen({ navigation }) {
                 <Row label="Requested" value={relative(offer.booking_timestamp)} />
               </View>
 
+              {offer.doctor_name || offer.nurse_required || offer.doctor_notes ? (
+                <View
+                  style={{
+                    marginTop: spacing.sm,
+                    padding: spacing.md,
+                    backgroundColor: `${colors.info}18`,
+                    borderColor: `${colors.info}55`,
+                    borderWidth: 1,
+                    borderRadius: radius.md,
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <Text style={{ fontSize: 13, fontFamily: FONT.bold, color: colors.info }}>
+                      👨‍⚕️ DOCTOR RECOMMENDED
+                    </Text>
+                    {offer.nurse_required ? (
+                      <Pill label="NURSE REQUIRED" tone={colors.danger} />
+                    ) : null}
+                  </View>
+                  {offer.doctor_name ? (
+                    <Row label="Doctor" value={`Dr. ${offer.doctor_name.replace(/^Dr\.?\s*/i, '')}`} />
+                  ) : null}
+                  {offer.doctor_notes ? (
+                    <View style={{ marginTop: 4, paddingTop: 4, borderTopWidth: 1, borderColor: `${colors.info}33` }}>
+                      <Small style={{ fontFamily: FONT.semibold, color: colors.text }}>Clinical Points & History:</Small>
+                      <Text style={{ fontSize: 13, color: colors.text, marginTop: 2 }}>{offer.doctor_notes}</Text>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
+
               {offer.latitude != null ? (
                 <View style={{ marginTop: spacing.md }}>
                   <MapPanel
                     markers={[
-                      { latitude: offer.latitude, longitude: offer.longitude, color: colors.accent, label: 'Pickup', icon: '📍', radius: 11 },
+                      { latitude: offer.latitude, longitude: offer.longitude, color: colors.accent, label: 'Pickup', radius: 11 },
                       ...markers,
                     ]}
-                    autoRoute
                     height={180}
                   />
                 </View>
@@ -566,5 +599,5 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.accent,
   },
-  countdownValue: { fontSize: 26, fontWeight: '800', color: colors.accent, lineHeight: 29 },
+  countdownValue: { fontSize: 26, fontFamily: FONT.bold, color: colors.accent, lineHeight: 29 },
 });

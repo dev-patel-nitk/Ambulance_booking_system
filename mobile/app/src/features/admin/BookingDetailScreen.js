@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../../lib/api';
 import { useResync, useSocketEvent } from '../../lib/socket';
 import { confirmAction } from '../../lib/confirm';
-import { colors, dateTimeOf, money, spacing, timeOf, typo } from '../../lib/theme';
+import { FONT, colors, dateTimeOf, money, spacing, timeOf, typo } from '../../lib/theme';
 import { Banner, Body, Button, Card, H2, Loading, Pill, Row, Small } from '../../components/ui';
 import MapPanel from '../../components/MapPanel';
 
@@ -58,9 +58,9 @@ export default function BookingDetailScreen({ route, navigation }) {
   const canRedispatch = ['FAILED', 'REQUESTED', 'MATCHING'].includes(b.booking_status);
 
   const markers = [
-    { latitude: b.latitude, longitude: b.longitude, color: colors.accent, label: 'Pickup', icon: '📍', radius: 11 },
+    { latitude: b.latitude, longitude: b.longitude, color: colors.accent, label: 'Pickup', radius: 11 },
     ...(data.locations?.[0]
-      ? [{ latitude: data.locations[0].latitude, longitude: data.locations[0].longitude, color: colors.ok, label: 'Ambulance', icon: '🚑', radius: 11 }]
+      ? [{ latitude: data.locations[0].latitude, longitude: data.locations[0].longitude, color: colors.ok, label: 'Ambulance', radius: 11 }]
       : []),
   ];
 
@@ -98,7 +98,7 @@ export default function BookingDetailScreen({ route, navigation }) {
 
       {b.latitude != null ? (
         <Card>
-          <MapPanel markers={markers} autoRoute height={220} />
+          <MapPanel markers={markers} height={220} />
         </Card>
       ) : null}
 
@@ -133,7 +133,7 @@ export default function BookingDetailScreen({ route, navigation }) {
           data.assignments.map((a, i) => (
             <View key={a.assignment_id} style={styles.listRow}>
               <View style={styles.head}>
-                <Body style={{ fontWeight: '600' }}>{i + 1}. {a.driver_name}</Body>
+                <Body style={{ fontFamily: FONT.semibold }}>{i + 1}. {a.driver_name}</Body>
                 <Pill label={a.assignment_status} />
               </View>
               <Small>{a.vehicle_reg_no} · {a.ambulance_type}</Small>

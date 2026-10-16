@@ -138,6 +138,9 @@ CREATE TABLE IF NOT EXISTS bookings (
   patient_name        TEXT,
   contact_phone       TEXT,
   notes               TEXT,
+  doctor_name         TEXT,
+  doctor_notes        TEXT,
+  nurse_required      INTEGER NOT NULL DEFAULT 0,
   booking_status      TEXT NOT NULL DEFAULT 'REQUESTED'
                       CHECK (booking_status IN ('REQUESTED','MATCHING','ASSIGNED','ENROUTE',
                                                 'ARRIVED','ONBOARD','COMPLETED','CANCELLED','FAILED')),

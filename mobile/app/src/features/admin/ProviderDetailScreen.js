@@ -80,7 +80,6 @@ export default function ProviderDetailScreen({ route }) {
                 longitude: p.longitude,
                 color: p.availability_status === 'AVAILABLE' ? colors.ok : colors.muted,
                 label: p.vehicle_reg_no,
-                icon: '🚑',
                 radius: 11,
               }]}
               height={200}

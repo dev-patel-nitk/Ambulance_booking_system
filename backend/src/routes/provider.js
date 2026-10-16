@@ -231,9 +231,17 @@ router.post('/location', requireProvider, asyncRoute(async (req, res) => {
       eta_minutes: r.eta_minutes,
       route_distance_km: r.route_distance_km,
       route_polyline: r.route_polyline,
+      // Decoded once here rather than in each client. Both ends draw the same
+      // line, and an encoded polyline is only useful to something that knows
+      // how to unpack it.
+      route_points: r.route_polyline ? decodePolyline(r.route_polyline) : [],
     };
     sockets.toUser(booking.user_id, 'trip:location', payload);
     sockets.toBooking(trip.booking_id, 'trip:location', payload);
+    // Back to the crew that sent it, so their own marker and ETA move on
+    // their map too. They are driving the ambulance the patient is watching;
+    // there is no reason only one of them should see it move.
+    sockets.toProvider(req.provider.provider_id, 'trip:location', payload);
     sockets.toAdmins('admin:trip:location', { ...payload, provider_id: req.provider.provider_id });
   }
 
@@ -244,7 +252,8 @@ router.post('/location', requireProvider, asyncRoute(async (req, res) => {
 router.get('/offers', requireProvider, asyncRoute(async (req, res) => {
   const rows = db.prepare(
     `SELECT a.*, b.ambulance_type, b.latitude, b.longitude, b.address_text, b.landmark,
-            b.notes, b.patient_name, b.booking_timestamp, b.booking_status
+            b.notes, b.patient_name, b.doctor_name, b.doctor_notes, b.nurse_required,
+            b.booking_timestamp, b.booking_status
      FROM assignments a
      JOIN bookings b ON b.booking_id = a.booking_id
      WHERE a.provider_id = ? AND a.assignment_status = 'OFFERED'
@@ -259,6 +268,7 @@ router.get('/offers', requireProvider, asyncRoute(async (req, res) => {
         0,
         Math.round((new Date(r.offer_expiry_timestamp).getTime() - Date.now()) / 1000)
       ),
+      nurse_required: Boolean(r.nurse_required),
       // The socket payload says this too. A console that reloaded, or came
       // back from the background, reads the list instead - and still has to
       // be able to say "first to accept" rather than implying the job is
@@ -290,12 +300,26 @@ router.get('/trips/active', requireProvider, asyncRoute(async (req, res) => {
   if (!trip) return res.json({ trip: null });
 
   const patient = db.prepare('SELECT full_name, phone_no FROM users WHERE user_id = ?').get(trip.user_id);
+
+  // The same picture the patient gets, from the other end. A crew navigating
+  // to a pickup needs to see the road they are being sent down and where they
+  // are on it, not a single marker on an empty map - and the data is already
+  // here, encoded, because the patient's tracking view needed it.
+  const route_points = trip.route_polyline ? decodePolyline(trip.route_polyline) : [];
+  const here = db.prepare(
+    'SELECT latitude, longitude, last_seen_timestamp FROM providers WHERE provider_id = ?'
+  ).get(req.provider.provider_id);
+
   res.json({
     trip: {
       ...trip,
-      route_points: trip.route_polyline ? decodePolyline(trip.route_polyline) : [],
+      nurse_required: Boolean(trip.nurse_required),
       patient: { full_name: trip.patient_name || patient.full_name, phone_no: trip.contact_phone || patient.phone_no },
       next_milestone: MILESTONE_ORDER[MILESTONE_ORDER.indexOf(trip.trip_milestone) + 1] || null,
+      route_points,
+      ambulance_location: here?.latitude != null
+        ? { latitude: here.latitude, longitude: here.longitude, as_of: here.last_seen_timestamp }
+        : null,
     },
   });
 }));

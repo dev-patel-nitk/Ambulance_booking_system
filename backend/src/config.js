@@ -100,13 +100,12 @@ const config = {
     secure: bool(process.env.EMAIL_SECURE, false),
     user: process.env.EMAIL_USER || '',
     pass: process.env.EMAIL_PASS || '',
-    from: process.env.EMAIL_FROM || 'Ambulance Booking System <mr.cool0631@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Ambulance Booking System <no-reply@nitk.ac.in>',
   },
 
   maps: {
     provider: (process.env.MAPS_PROVIDER || 'osm').toLowerCase(),
     googleKey: process.env.GOOGLE_MAPS_API_KEY || '',
-    maptilerKey: process.env.MAPTILER_API_KEY || '6mLLgOMyLQp0DFy6CtAC',
     nominatimUrl: process.env.NOMINATIM_URL || 'https://nominatim.openstreetmap.org',
     osrmUrl: process.env.OSRM_URL || 'https://router.project-osrm.org',
     contactEmail: process.env.GEO_CONTACT_EMAIL || 'team16@nitk.edu.in',

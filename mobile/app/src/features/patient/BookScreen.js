@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { readPosition as readDevicePosition } from '../../lib/location';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../../lib/api';
 import { useResync, useSocketEvent } from '../../lib/socket';
 import { confirmAction } from '../../lib/confirm';
 import { AMBULANCE_TYPES } from '../../lib/config';
-import { colors, money, radius, spacing, typo } from '../../lib/theme';
+import { FONT, colors, money, radius, spacing, typo } from '../../lib/theme';
 import { Banner, Body, Button, Card, Field, H2, Loading, Pill, Small } from '../../components/ui';
 import MapPanel from '../../components/MapPanel';
 
@@ -23,6 +23,10 @@ export default function BookScreen({ navigation }) {
   const [searching, setSearching] = useState(false);
   const [notes, setNotes] = useState('');
   const [patientName, setPatientName] = useState('');
+  const [isDoctorRecommended, setIsDoctorRecommended] = useState(false);
+  const [doctorName, setDoctorName] = useState('');
+  const [doctorNotes, setDoctorNotes] = useState('');
+  const [nurseRequired, setNurseRequired] = useState(false);
   const [nearby, setNearby] = useState([]);
   const [estimate, setEstimate] = useState(null);
   const [error, setError] = useState('');
@@ -118,10 +122,17 @@ export default function BookScreen({ navigation }) {
         pincode: pickup.pincode,
         patient_name: patientName.trim() || undefined,
         notes: notes.trim() || undefined,
+        doctor_name: isDoctorRecommended && doctorName.trim() ? doctorName.trim() : undefined,
+        doctor_notes: isDoctorRecommended && doctorNotes.trim() ? doctorNotes.trim() : undefined,
+        nurse_required: isDoctorRecommended ? nurseRequired : false,
       });
       setActive(r.booking);
       setNotes('');
       setPatientName('');
+      setIsDoctorRecommended(false);
+      setDoctorName('');
+      setDoctorNotes('');
+      setNurseRequired(false);
       navigation.navigate('Track');
     } catch (e) {
       setError(e.message);
@@ -148,11 +159,14 @@ export default function BookScreen({ navigation }) {
   }
 
   const markers = [
-    ...(pickup ? [{ ...pickup, color: colors.accent, label: 'Pickup', icon: '📍', radius: 11 }] : []),
+    ...(pickup
+      ? [{ ...pickup, kind: 'pickup', glyph: '📍', label: 'Pickup — drag to adjust' }]
+      : []),
     ...nearby.slice(0, 10).map((a) => ({
-      latitude: a.latitude, longitude: a.longitude, color: colors.ok, radius: 8,
-      label: `${a.ambulance_type} · ${a.distance_km} km`,
-      icon: '🚑',
+      latitude: a.latitude,
+      longitude: a.longitude,
+      glyph: '🚑',
+      label: `${a.ambulance_type} · ${a.distance_km} km away`,
     })),
   ];
 
@@ -169,24 +183,20 @@ export default function BookScreen({ navigation }) {
       <Card>
         <H2>Where are you?</H2>
         <Small style={{ marginTop: 4, marginBottom: spacing.md }}>
-          Tap the map to move the pin, or search for a landmark.
+          Move the map so the pin sits on you, or search for a landmark.
         </Small>
 
         <MapPanel
           markers={markers}
-          height={240}
-          onPick={async (lat, lng, info) => {
+          height={230}
+          onPick={async (lat, lng) => {
             const coords = { latitude: Number(lat.toFixed(6)), longitude: Number(lng.toFixed(6)) };
-            if (info && info.address) {
-              setPickup({ ...coords, address_text: info.address, pincode: info.pincode });
-            } else {
-              setPickup({ ...coords, address_text: 'Locating address…' });
-              try {
-                const rev = await api.get(`/api/geo/reverse?lat=${coords.latitude}&lng=${coords.longitude}`);
-                setPickup({ ...coords, address_text: rev.location.address_text, pincode: rev.location.pincode });
-              } catch {
-                setPickup({ ...coords, address_text: `${coords.latitude}, ${coords.longitude}` });
-              }
+            setPickup({ ...coords, address_text: 'Locating address…' });
+            try {
+              const rev = await api.get(`/api/geo/reverse?lat=${coords.latitude}&lng=${coords.longitude}`);
+              setPickup({ ...coords, address_text: rev.location.address_text, pincode: rev.location.pincode });
+            } catch {
+              setPickup({ ...coords, address_text: `${coords.latitude}, ${coords.longitude}` });
             }
           }}
         />
@@ -271,7 +281,7 @@ export default function BookScreen({ navigation }) {
                 <Text
                   style={{
                     fontSize: 15,
-                    fontWeight: t.urgent ? '800' : '600',
+                    fontFamily: t.urgent ? FONT.bold : FONT.semibold,
                     color: selected ? colors.white : t.urgent ? colors.danger : colors.text,
                   }}
                 >
@@ -307,6 +317,81 @@ export default function BookScreen({ navigation }) {
           style={{ minHeight: 80, textAlignVertical: 'top' }}
           hint="This is sent to the driver with the dispatch alert."
         />
+
+        <View style={{ marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderColor: colors.line }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <View style={{ flex: 1, paddingRight: spacing.sm }}>
+              <Text style={{ color: colors.text, fontSize: 15, fontFamily: FONT.semibold }}>
+                👨‍⚕️ Doctor's recommendation?
+              </Text>
+              <Small style={{ marginTop: 2 }}>
+                Recommended by a physician or requiring specific clinical care
+              </Small>
+            </View>
+            <Switch
+              value={isDoctorRecommended}
+              onValueChange={setIsDoctorRecommended}
+              trackColor={{ false: colors.line, true: `${colors.ok}88` }}
+              thumbColor={isDoctorRecommended ? colors.ok : colors.muted}
+            />
+          </View>
+
+          {isDoctorRecommended ? (
+            <View
+              style={{
+                marginTop: spacing.md,
+                backgroundColor: colors.surface2,
+                padding: spacing.md,
+                borderRadius: radius.md,
+                borderWidth: 1,
+                borderColor: colors.line,
+              }}
+            >
+              <Field
+                label="Doctor's name"
+                value={doctorName}
+                onChangeText={setDoctorName}
+                placeholder="e.g. Dr. Rajesh Sharma"
+              />
+              <Field
+                label="Medical points / clinical history"
+                value={doctorNotes}
+                onChangeText={setDoctorNotes}
+                placeholder="e.g. Patient has history of asthma, needs oxygen"
+                multiline
+                numberOfLines={3}
+                style={{ minHeight: 70, textAlignVertical: 'top' }}
+                hint="This information is delivered directly to the driver and crew."
+              />
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginTop: spacing.xs,
+                  paddingTop: spacing.sm,
+                  borderTopWidth: 1,
+                  borderColor: colors.line,
+                }}
+              >
+                <View style={{ flex: 1, paddingRight: spacing.sm }}>
+                  <Text style={{ color: colors.text, fontSize: 14, fontFamily: FONT.semibold }}>
+                    Nurse required?
+                  </Text>
+                  <Small style={{ marginTop: 2 }}>
+                    Request accompanying nursing support on board
+                  </Small>
+                </View>
+                <Switch
+                  value={nurseRequired}
+                  onValueChange={setNurseRequired}
+                  trackColor={{ false: colors.line, true: `${colors.danger}88` }}
+                  thumbColor={nurseRequired ? colors.danger : colors.muted}
+                />
+              </View>
+            </View>
+          ) : null}
+        </View>
       </Card>
 
       {/* --------------------------------------------------- F.10 fare */}
@@ -355,8 +440,8 @@ export default function BookScreen({ navigation }) {
 function FareRow({ label, value, bold }) {
   return (
     <View style={styles.fareRow}>
-      <Text style={[typo.small, bold && { color: colors.text, fontWeight: '700' }]}>{label}</Text>
-      <Text style={[typo.body, bold && { fontWeight: '700', fontSize: 17 }]}>{value}</Text>
+      <Text style={[typo.small, bold && { color: colors.text, fontFamily: FONT.bold }]}>{label}</Text>
+      <Text style={[typo.body, bold && { fontFamily: FONT.bold, fontSize: 17 }]}>{value}</Text>
     </View>
   );
 }

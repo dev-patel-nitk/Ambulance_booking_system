@@ -4,5 +4,6 @@ dist/
 .env
 *.log
 backend/data/
+apk/
+*.apk
 .DS_Store
-

@@ -37,6 +37,9 @@ const COLUMN_ADDITIONS = [
   ['trips', 'distance_travelled_km', 'REAL NOT NULL DEFAULT 0'],
   ['trips', 'laden_distance_km', 'REAL NOT NULL DEFAULT 0'],
   ['bookings', 'stall_flagged_at', 'TEXT'],
+  ['bookings', 'doctor_name', 'TEXT'],
+  ['bookings', 'doctor_notes', 'TEXT'],
+  ['bookings', 'nurse_required', 'INTEGER NOT NULL DEFAULT 0'],
   ['sessions', 'token_id', 'TEXT'],
   ['sessions', 'role_code', 'TEXT'],
   ['sessions', 'revoked_at', 'TEXT'],
@@ -251,8 +254,9 @@ const nowIso = () => new Date().toISOString();
 
 /** Appends an audit record (constraint C.5). Never throws into the caller. */
 function audit(action, { actorUserId = null, actorRole = null, entityType = null, entityId = null, details = null } = {}) {
+  const created_at = nowIso();
   try {
-    db.prepare(
+    const info = db.prepare(
       `INSERT INTO audit_log (actor_user_id, actor_role, action, entity_type, entity_id, details, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
     ).run(
@@ -262,8 +266,28 @@ function audit(action, { actorUserId = null, actorRole = null, entityType = null
       entityType,
       entityId,
       details ? JSON.stringify(details) : null,
-      nowIso()
+      created_at
     );
+
+    // The control room's audit trail is meant to be watched, not refreshed.
+    // Required here rather than at the top of the file because the socket
+    // layer requires this module: taking it at call time breaks the cycle,
+    // and before a server exists there is simply nothing to emit to.
+    try {
+      require('../realtime/socket').toAdmins('admin:audit', {
+        id: Number(info.lastInsertRowid),
+        actor_user_id: actorUserId,
+        actor_role: actorRole,
+        action,
+        entity_type: entityType,
+        entity_id: entityId,
+        details: details ? JSON.stringify(details) : null,
+        created_at,
+      });
+    } catch {
+      // No socket server yet - a seed run, or a test touching the database
+      // directly. The row is written either way, which is what matters.
+    }
   } catch (err) {
     console.error('[audit] failed to record entry:', err.message);
   }

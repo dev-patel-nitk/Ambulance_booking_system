@@ -2,10 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { Alert, Linking, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../../lib/api';
-import { connectSocket, getSocket, useResync, useSocketEvent } from '../../lib/socket';
+import { getSocket, useResync, useSocketEvent } from '../../lib/socket';
 import { MILESTONE_STEPS } from '../../lib/config';
 import { confirmAction } from '../../lib/confirm';
-import { STATUS_TEXT, colors, dateTimeOf, money, radius, spacing, typo } from '../../lib/theme';
+import { FONT, STATUS_TEXT, colors, dateTimeOf, money, radius, spacing, typo } from '../../lib/theme';
 import { Banner, Body, Button, Card, EmptyState, H2, Loading, Pill, Row, Small, StepTrail } from '../../components/ui';
 import { callCounterparty } from '../../lib/calling';
 import MapPanel from '../../components/MapPanel';
@@ -19,6 +19,7 @@ export default function TrackScreen({ navigation }) {
   const [cancelling, setCancelling] = useState(false);
 
   const loadActive = useCallback(async () => {
+    setError('');
     try {
       const r = await api.get('/api/bookings/active');
       setBooking(r.booking);
@@ -35,47 +36,38 @@ export default function TrackScreen({ navigation }) {
     }
   }, []);
 
-  useFocusEffect(useCallback(() => {
-    connectSocket();
-    loadActive();
-  }, [loadActive]));
-
+  useFocusEffect(useCallback(() => { loadActive(); }, [loadActive]));
   useResync(loadActive, [loadActive]);
 
-  // Real-time heartbeat polling (every 3s while active): ensures tracking never freezes
-  const finished = Boolean(booking && ['COMPLETED', 'CANCELLED', 'FAILED'].includes(booking.booking_status));
+  // Join the booking room so updates arrive without polling.
   useEffect(() => {
-    if (!booking || finished) return undefined;
-    const interval = setInterval(() => {
-      loadActive();
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [booking?.booking_id, finished, loadActive]);
-
-  // Join the booking room so updates arrive via WebSockets
-  useEffect(() => {
-    const socket = getSocket() || connectSocket();
-    if (!socket || !booking?.booking_id) return undefined;
+    const socket = getSocket();
+    if (!socket || !booking) return undefined;
     socket.emit('booking:subscribe', booking.booking_id);
     return () => socket.emit('booking:unsubscribe', booking.booking_id);
   }, [booking?.booking_id]);
 
   useSocketEvent('booking:update', (b) => {
     setBooking(b);
-    loadActive();
+    if (['ASSIGNED', 'ENROUTE', 'ARRIVED', 'ONBOARD'].includes(b.booking_status)) loadActive();
   }, [loadActive]);
 
-  // Each GPS ping from the driver arrives here (F.8)
+  // Each GPS ping from the driver arrives here (F.8).
   useSocketEvent('trip:location', (p) => {
-    if (p) {
-      setTrack((prev) => ({
-        ...(prev || {}),
-        ambulance_location: { latitude: p.latitude, longitude: p.longitude, gps_timestamp: p.gps_timestamp },
-        trip: { ...(prev?.trip || {}), eta_minutes: p.eta_minutes, route_distance_km: p.route_distance_km },
-      }));
-      loadActive();
-    }
-  }, [loadActive]);
+    setTrack((prev) =>
+      prev
+        ? {
+            ...prev,
+            ambulance_location: { latitude: p.latitude, longitude: p.longitude, gps_timestamp: p.gps_timestamp },
+            // The road ahead changes as the ambulance moves, so the line
+            // drawn on the map has to change with it rather than staying as
+            // it was when the screen opened.
+            route_points: p.route_points?.length ? p.route_points : prev.route_points,
+            trip: { ...prev.trip, eta_minutes: p.eta_minutes, route_distance_km: p.route_distance_km },
+          }
+        : prev
+    );
+  }, []);
 
   useSocketEvent('trip:status', () => loadActive(), [loadActive]);
 
@@ -109,12 +101,26 @@ export default function TrackScreen({ navigation }) {
   }
 
   const searching = ['REQUESTED', 'MATCHING'].includes(booking.booking_status);
+  const finished = ['COMPLETED', 'CANCELLED', 'FAILED'].includes(booking.booking_status);
   const currentIndex = MILESTONE_STEPS.findIndex((s) => s.code === (booking.trip?.trip_milestone || 'ASSIGNED'));
 
   const markers = [
-    { latitude: booking.latitude, longitude: booking.longitude, color: colors.accent, label: 'Pickup', icon: '📍', radius: 11 },
+    {
+      latitude: booking.latitude, longitude: booking.longitude,
+      glyph: '📍', label: 'You', labelAlways: true,
+    },
     ...(track?.ambulance_location
-      ? [{ ...track.ambulance_location, color: colors.ok, label: 'Ambulance', icon: '🚑', radius: 12 }]
+      ? [{
+          ...track.ambulance_location,
+          glyph: '🚑',
+          // Kept open: this is the thing being watched, and a tooltip that
+          // needs a tap is no use to somebody holding the phone and looking up
+          // the road every few seconds.
+          labelAlways: true,
+          label: track.trip?.eta_minutes != null
+            ? `Arriving in ${track.trip.eta_minutes} min`
+            : 'On the way',
+        }]
       : []),
   ];
 
@@ -147,7 +153,7 @@ export default function TrackScreen({ navigation }) {
           <View style={styles.etaBox}>
             <Text style={styles.etaValue}>{track.trip.eta_minutes}</Text>
             <View>
-              <Body style={{ fontWeight: '700' }}>minutes away</Body>
+              <Body style={{ fontFamily: FONT.bold }}>minutes away</Body>
               <Small>
                 {track.trip.route_distance_km != null ? `${track.trip.route_distance_km} km by road` : ''}
               </Small>
@@ -165,12 +171,7 @@ export default function TrackScreen({ navigation }) {
       {/* -------------------------------------------------------- the map */}
       {!finished ? (
         <Card>
-          <MapPanel
-            markers={markers}
-            route={track?.route_points || []}
-            autoRoute={Boolean(!track?.route_points?.length && track?.ambulance_location)}
-            height={280}
-          />
+          <MapPanel markers={markers} route={track?.route_points || []} height={280} />
           <Small style={{ marginTop: spacing.sm }}>
             Red pin is your pickup point. Green marker is the ambulance
             {track?.ambulance_location?.gps_timestamp
@@ -228,6 +229,15 @@ export default function TrackScreen({ navigation }) {
           {booking.landmark ? <Row label="Landmark" value={booking.landmark} /> : null}
           {booking.patient_name ? <Row label="Patient" value={booking.patient_name} /> : null}
           {booking.notes ? <Row label="Notes" value={booking.notes} /> : null}
+          {booking.doctor_name ? (
+            <Row label="Doctor" value={`Dr. ${booking.doctor_name.replace(/^Dr\.?\s*/i, '')}`} />
+          ) : null}
+          {booking.nurse_required ? (
+            <Row label="Nurse required" value="Yes" valueStyle={{ color: colors.danger, fontFamily: FONT.bold }} />
+          ) : null}
+          {booking.doctor_notes ? (
+            <Row label="Clinical points" value={booking.doctor_notes} />
+          ) : null}
           <Row label="Placed at" value={dateTimeOf(booking.booking_timestamp)} />
           {booking.response_time_sec != null ? (
             <Row label="Accepted in" value={`${booking.response_time_sec} s`} />
@@ -283,5 +293,5 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.line,
   },
-  etaValue: { fontSize: 44, fontWeight: '800', color: colors.ok, lineHeight: 48 },
+  etaValue: { fontSize: 44, fontFamily: FONT.bold, color: colors.ok, lineHeight: 48 },
 });

@@ -73,6 +73,7 @@ function publicBooking(booking) {
   const trip = db.prepare('SELECT * FROM trips WHERE booking_id = ?').get(booking.booking_id);
   return {
     ...booking,
+    nurse_required: Boolean(booking.nurse_required),
     provider: provider ? summariseProvider(provider) : null,
     trip: trip || null,
   };
@@ -204,6 +205,9 @@ function offerPayload({ booking, candidate, assignmentId, expiry, broadcast }) {
       : null,
     patient_name: booking.patient_name,
     notes: booking.notes,
+    doctor_name: booking.doctor_name || null,
+    doctor_notes: booking.doctor_notes || null,
+    nurse_required: Boolean(booking.nurse_required),
     distance_km: candidate.distance_km,
     rank_score: candidate.rank_score,
     offer_expiry_timestamp: expiry,

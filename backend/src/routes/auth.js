@@ -131,13 +131,7 @@ router.post('/register', registerLimiter, asyncRoute(async (req, res) => {
      VALUES (?, 'EMAIL', ?, ?, 'REGISTER', 'EMAIL', ?, ?)`
   ).run(email_id, otp_code, otp_expiry, email_id, nowIso());
 
-  try {
-    await messaging.sendOtp({ phoneNo: phone_no, otpCode: otp_code, channel: 'EMAIL', emailId: email_id });
-  } catch (err) {
-    return res.status(502).json({
-      error: `Could not send verification email: ${err.message}. Please check your email address.`,
-    });
-  }
+  await messaging.sendOtp({ phoneNo: phone_no, otpCode: otp_code, channel: 'EMAIL', emailId: email_id });
   audit('OTP_ISSUED', {
     entityType: 'email', entityId: email_id,
     details: { purpose: 'REGISTER', channel: 'EMAIL', role_code },
@@ -219,18 +213,12 @@ router.post('/otp/request', otpRequestLimiter, asyncRoute(async (req, res) => {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(identifier, identifier_type, otp_code, otp_expiry, purpose, channel, destination, nowIso());
 
-  try {
-    await messaging.sendOtp({
-      phoneNo: phone_no || existing?.phone_no || null,
-      otpCode: otp_code,
-      channel,
-      emailId: channel === 'EMAIL' ? destination : null,
-    });
-  } catch (err) {
-    return res.status(502).json({
-      error: `Could not send verification code: ${err.message}. Please try again shortly.`,
-    });
-  }
+  await messaging.sendOtp({
+    phoneNo: phone_no || existing?.phone_no || null,
+    otpCode: otp_code,
+    channel,
+    emailId: channel === 'EMAIL' ? destination : null,
+  });
   audit('OTP_ISSUED', {
     entityType: identifier_type.toLowerCase(),
     entityId: identifier,
@@ -567,15 +555,9 @@ router.post('/password/forgot', otpRequestLimiter, asyncRoute(async (req, res) =
      VALUES (?, 'EMAIL', ?, ?, 'RESET', 'EMAIL', ?, ?)`
   ).run(email_id, otp_code, otp_expiry, email_id, nowIso());
 
-  try {
-    await messaging.sendOtp({
-      phoneNo: user.phone_no, otpCode: otp_code, channel: 'EMAIL', emailId: email_id,
-    });
-  } catch (err) {
-    return res.status(502).json({
-      error: `Could not send reset code email: ${err.message}. Please try again shortly.`,
-    });
-  }
+  await messaging.sendOtp({
+    phoneNo: user.phone_no, otpCode: otp_code, channel: 'EMAIL', emailId: email_id,
+  });
   audit('PASSWORD_RESET_REQUESTED', {
     actorUserId: user.user_id, entityType: 'user', entityId: user.user_id,
   });

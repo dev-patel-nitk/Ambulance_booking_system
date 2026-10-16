@@ -124,6 +124,7 @@ describe('booking, matching and dispatch (F.3 - F.7)', () => {
   test('a booking reaches the nearest suitable driver as a timed offer', async () => {
     const { bookingId, offer } = await h.bookAndAwaitOffer(patient, driver, {
       ambulance_type: 'ALS', ...NITK, address_text: 'NITK Surathkal main gate', notes: 'Chest pain',
+      doctor_name: 'Dr. Ramesh Kumar', doctor_notes: 'History of asthma, needs oxygen', nurse_required: true,
     });
 
     assert.match(bookingId, /^BK[0-9]{8}$/);
@@ -131,6 +132,9 @@ describe('booking, matching and dispatch (F.3 - F.7)', () => {
     assert.ok(offer.rank_score >= 0 && offer.rank_score <= 100, 'rank_score is bounded 0-100');
     assert.ok(offer.expires_in_seconds > 0 && offer.expires_in_seconds <= 45, 'offer carries the 45s window');
     assert.ok(offer.latitude != null && offer.longitude != null, 'offer carries pickup coordinates');
+    assert.equal(offer.doctor_name, 'Dr. Ramesh Kumar');
+    assert.equal(offer.doctor_notes, 'History of asthma, needs oxygen');
+    assert.equal(offer.nurse_required, true);
   });
 
   test('a second concurrent booking by the same patient is refused', async () => {
@@ -163,6 +167,11 @@ describe('booking, matching and dispatch (F.3 - F.7)', () => {
     assert.match(r.body.trip_id, /^TR[0-9]{8}$/);
     assert.equal(r.body.booking.booking_status, 'ASSIGNED');
     assert.ok(r.body.booking.response_time_sec >= 0, 'response time is recorded for F.13 reporting');
+
+    const active = await get('/api/provider/trips/active', { token: driver });
+    assert.equal(active.body.trip.doctor_name, 'Dr. Ramesh Kumar');
+    assert.equal(active.body.trip.doctor_notes, 'History of asthma, needs oxygen');
+    assert.equal(Boolean(active.body.trip.nurse_required), true);
   });
 
   test('the same offer cannot be accepted twice', async () => {

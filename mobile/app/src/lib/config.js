@@ -93,6 +93,33 @@ export function modeForRoleCode(roleCode) {
  * `urgent` marks it so the screen can set it apart from a considered choice
  * between care levels.
  */
+/**
+ * MapTiler supplies the map tiles. The key belongs in the tile URL - it is a
+ * client-side key by design, and MapTiler restricts it by origin in their
+ * dashboard rather than by keeping it secret.
+ *
+ * Leave it empty and the map falls back to OpenStreetMap's own tiles, which
+ * work, look plainer, and whose usage policy asks applications not to depend
+ * on them.
+ */
+export const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY || '6mLLgOMyLQp0DFy6CtAC';
+
+/** Team 16. */
+export const TEAM = [
+  { name: 'Adithya Shyam D', roll: '241IT005' },
+  { name: 'Dev Patel', roll: '241IT023' },
+  { name: 'Ritesh Bhagat', roll: '241IT063' },
+];
+
+/**
+ * Where the user manual lives.
+ *
+ * Empty until the PDF is uploaded somewhere it can be opened from - a raw
+ * GitHub link to docs/ is enough. Setting it turns the placeholder in the
+ * About panel into a working button with no code change.
+ */
+export const USER_MANUAL_URL = process.env.EXPO_PUBLIC_USER_MANUAL_URL || '';
+
 export const AMBULANCE_TYPES = [
   {
     code: 'EMG',
@@ -162,11 +189,3 @@ export const REPORT_TYPES = [
   { code: 'REVENUE', label: 'Revenue' },
   { code: 'PROVIDER_PERF', label: 'Providers' },
 ];
-
-/** Map & Geolocation services: MapTiler, Nominatim & OSRM */
-export const MAP_CONFIG = {
-  maptilerKey: process.env.EXPO_PUBLIC_MAPTILER_KEY || '6mLLgOMyLQp0DFy6CtAC',
-  nominatimUrl: process.env.EXPO_PUBLIC_NOMINATIM_URL || 'https://nominatim.openstreetmap.org',
-  osrmUrl: process.env.EXPO_PUBLIC_OSRM_URL || 'https://router.project-osrm.org',
-};
-

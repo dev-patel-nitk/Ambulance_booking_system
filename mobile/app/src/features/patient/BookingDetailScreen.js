@@ -3,7 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../../lib/api';
 import { PAYMENT_MODES } from '../../lib/config';
-import { colors, dateTimeOf, money, radius, spacing, typo } from '../../lib/theme';
+import { FONT, colors, dateTimeOf, money, radius, spacing, typo } from '../../lib/theme';
 import { Banner, Body, Button, Card, Field, H2, Loading, Pill, Row, Small } from '../../components/ui';
 import MapPanel from '../../components/MapPanel';
 
@@ -86,7 +86,7 @@ export default function BookingDetailScreen({ route }) {
 
         <View style={{ marginTop: spacing.md }}>
           <MapPanel
-            markers={[{ latitude: b.latitude, longitude: b.longitude, color: colors.accent, label: 'Pickup', icon: '📍' }]}
+            markers={[{ latitude: b.latitude, longitude: b.longitude, color: colors.accent, label: 'Pickup' }]}
             height={170}
           />
         </View>
@@ -96,6 +96,9 @@ export default function BookingDetailScreen({ route }) {
           {b.landmark ? <Row label="Landmark" value={b.landmark} /> : null}
           {b.patient_name ? <Row label="Patient" value={b.patient_name} /> : null}
           {b.notes ? <Row label="Notes" value={b.notes} /> : null}
+          {b.doctor_name ? <Row label="Referred by" value={`Dr. ${b.doctor_name.replace(/^Dr\.?\s*/i, '')}`} /> : null}
+          {b.nurse_required ? <Row label="Nurse required" value="Yes" valueStyle={{ color: colors.danger, fontFamily: FONT.bold }} /> : null}
+          {b.doctor_notes ? <Row label="Clinical points" value={b.doctor_notes} /> : null}
           {b.response_time_sec != null ? <Row label="Ambulance accepted in" value={`${b.response_time_sec} s`} /> : null}
           {b.completed_at ? <Row label="Completed" value={dateTimeOf(b.completed_at)} /> : null}
           {b.cancelled_reason ? <Row label="Closed because" value={b.cancelled_reason} /> : null}
@@ -127,7 +130,7 @@ export default function BookingDetailScreen({ route }) {
           {inv.type_surcharge > 0 ? <Row label="Type surcharge" value={money(inv.type_surcharge)} /> : null}
           <Row label="Tax" value={money(inv.tax_amount)} />
           <View style={styles.divider} />
-          <Row label="Total payable" value={money(inv.fare_amount)} valueStyle={{ fontSize: 20, fontWeight: '800' }} />
+          <Row label="Total payable" value={money(inv.fare_amount)} valueStyle={{ fontSize: 20, fontFamily: FONT.bold }} />
 
           {inv.payment_status === 'PENDING' ? (
             <View style={{ marginTop: spacing.md }}>
@@ -140,7 +143,7 @@ export default function BookingDetailScreen({ route }) {
                     style={[styles.mode, mode === m.code && styles.modeActive]}
                   >
                     <Text style={{ fontSize: 18 }}>{m.icon}</Text>
-                    <Text style={{ color: mode === m.code ? colors.white : colors.muted, fontSize: 12, fontWeight: '600' }}>
+                    <Text style={{ color: mode === m.code ? colors.white : colors.muted, fontSize: 12, fontFamily: FONT.semibold }}>
                       {m.label}
                     </Text>
                   </Pressable>
@@ -215,7 +218,7 @@ export default function BookingDetailScreen({ route }) {
           {data.assignments.map((a) => (
             <View key={a.assignment_id} style={styles.assignRow}>
               <View style={{ flex: 1 }}>
-                <Body style={{ fontWeight: '600' }}>{a.vehicle_reg_no}</Body>
+                <Body style={{ fontFamily: FONT.semibold }}>{a.vehicle_reg_no}</Body>
                 <Small>{a.driver_name} · {a.distance_km} km away</Small>
               </View>
               <Pill label={a.assignment_status} />

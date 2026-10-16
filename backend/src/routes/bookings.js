@@ -77,11 +77,16 @@ router.post('/', authenticate, requireRole('USER'), asyncRoute(async (req, res) 
   const booking_id = nextId('booking');
   const now = nowIso();
 
+  const doctor_name = v.text(req.body.doctor_name, 100, 'doctor_name');
+  const doctor_notes = v.text(req.body.doctor_notes, 500, 'doctor_notes');
+  const nurse_required = req.body.nurse_required ? 1 : 0;
+
   db.prepare(
     `INSERT INTO bookings (booking_id, user_id, ambulance_type, latitude, longitude, address_text,
                            landmark, pincode, place_id, drop_latitude, drop_longitude, drop_address_text,
-                           patient_name, contact_phone, notes, booking_status, booking_timestamp, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'REQUESTED', ?, ?)`
+                           patient_name, contact_phone, notes, doctor_name, doctor_notes, nurse_required,
+                           booking_status, booking_timestamp, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'REQUESTED', ?, ?)`
   ).run(
     booking_id, req.user.user_id, ambulance_type, latitude, longitude, address_text,
     landmark, pincode, place_id,
@@ -91,6 +96,9 @@ router.post('/', authenticate, requireRole('USER'), asyncRoute(async (req, res) 
     v.text(req.body.patient_name, 60, 'patient_name'),
     req.body.contact_phone ? v.phone(req.body.contact_phone, 'contact_phone') : req.user.phone_no,
     v.text(req.body.notes, 250, 'notes'),
+    doctor_name,
+    doctor_notes,
+    nurse_required,
     now, now
   );
 

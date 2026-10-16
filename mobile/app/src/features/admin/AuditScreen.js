@@ -2,8 +2,8 @@ import { useCallback, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../../lib/api';
-import { useResync } from '../../lib/socket';
-import { colors, dateTimeOf, radius, relative, spacing, typo } from '../../lib/theme';
+import { useResync, useSocketEvent } from '../../lib/socket';
+import { FONT, colors, dateTimeOf, radius, relative, spacing, typo } from '../../lib/theme';
 import { Banner, Body, Card, EmptyState, Loading, Small } from '../../components/ui';
 
 /**
@@ -47,6 +47,16 @@ export default function AuditScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   useResync(load, [load]);
 
+  // The trail tails rather than being refreshed. Prepending the row that
+  // arrived, instead of refetching the page it belongs to, keeps the list
+  // moving without asking the server for everything again each time somebody
+  // does anything - and an audit row is written for nearly every action.
+  useSocketEvent('admin:audit', (row) => {
+    if (filter && row.action !== filter) return;
+    setRows((prev) => [row, ...prev].slice(0, 200));
+    setActions((prev) => (prev.includes(row.action) ? prev : [...prev, row.action]));
+  }, [filter]);
+
   if (loading) return <Loading text="Reading the audit trail…" />;
 
   return (
@@ -61,7 +71,7 @@ export default function AuditScreen() {
         <View style={{ flexDirection: 'row', gap: spacing.sm }}>
           {[{ key: '', label: 'All' }, ...actions.map((a) => ({ key: a, label: a }))].map((c) => (
             <Pressable key={c.key || 'all'} onPress={() => setFilter(c.key)} style={[styles.chip, filter === c.key && styles.chipOn]}>
-              <Text style={{ color: filter === c.key ? colors.white : colors.muted, fontSize: 11.5, fontWeight: '600' }}>
+              <Text style={{ color: filter === c.key ? colors.white : colors.muted, fontSize: 11.5, fontFamily: FONT.semibold }}>
                 {c.label}
               </Text>
             </Pressable>
@@ -79,7 +89,7 @@ export default function AuditScreen() {
             <View key={r.id} style={styles.row}>
               <View style={styles.head}>
                 <View style={[styles.tag, { borderColor: TONE(r.action) }]}>
-                  <Text style={{ color: TONE(r.action), fontSize: 11, fontWeight: '700' }}>{r.action}</Text>
+                  <Text style={{ color: TONE(r.action), fontSize: 11, fontFamily: FONT.bold }}>{r.action}</Text>
                 </View>
                 <Small style={typo.tiny}>{relative(r.created_at)}</Small>
               </View>

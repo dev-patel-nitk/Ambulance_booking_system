@@ -2,10 +2,10 @@ import { useCallback, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../../lib/api';
-import { useResync } from '../../lib/socket';
+import { useResync, useSocketEvent } from '../../lib/socket';
 import { confirmAction } from '../../lib/confirm';
 import { ROLE_CODES } from '../../lib/config';
-import { colors, radius, spacing, typo } from '../../lib/theme';
+import { FONT, colors, radius, spacing, typo } from '../../lib/theme';
 import { Banner, Body, Button, Card, EmptyState, Field, Loading, Pill, Row, Small } from '../../components/ui';
 
 /**
@@ -42,6 +42,15 @@ export default function UsersScreen() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
   useResync(load, [load]);
+
+  // A registration is one audit row away, and the account list is short
+  // enough that refetching it is cheaper than reconstructing a row from an
+  // event that was never shaped for this screen.
+  useSocketEvent('admin:audit', (row) => {
+    if (row.action === 'USER_REGISTERED') load();
+  }, [load]);
+
+  useSocketEvent('admin:provider:new', load, [load]);
 
   async function setStatus(user, verification_status) {
     setBusyId(user.user_id);
@@ -82,7 +91,7 @@ export default function UsersScreen() {
         <View style={{ flexDirection: 'row', gap: spacing.sm }}>
           {[{ key: '', label: 'All' }, ...ROLE_CODES.map((r) => ({ key: r, label: r }))].map((c) => (
             <Pressable key={c.key || 'all'} onPress={() => setRole(c.key)} style={[styles.chip, role === c.key && styles.chipOn]}>
-              <Text style={{ color: role === c.key ? colors.white : colors.muted, fontSize: 12.5, fontWeight: '600' }}>
+              <Text style={{ color: role === c.key ? colors.white : colors.muted, fontSize: 12.5, fontFamily: FONT.semibold }}>
                 {c.label}
               </Text>
             </Pressable>
@@ -98,7 +107,7 @@ export default function UsersScreen() {
         rows.map((u) => (
           <Card key={u.user_id}>
             <View style={styles.head}>
-              <Body style={{ fontWeight: '700' }}>{u.full_name}</Body>
+              <Body style={{ fontFamily: FONT.bold }}>{u.full_name}</Body>
               <Pill label={u.verification_status} />
             </View>
             <Small style={{ marginTop: 2 }}>{u.phone_no}</Small>

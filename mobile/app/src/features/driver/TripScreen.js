@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Alert, Linking, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { callCounterparty } from '../../lib/calling';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../../lib/api';
 import { useResync, useSocketEvent } from '../../lib/socket';
 import { confirmAction } from '../../lib/confirm';
-import { readPosition } from '../../lib/location';
 import { DRIVER_MILESTONES } from '../../lib/config';
 import { colors, dateTimeOf, money, spacing } from '../../lib/theme';
 import { Banner, Button, Card, EmptyState, H2, Loading, Pill, Row, Small, StepTrail } from '../../components/ui';
@@ -26,20 +25,6 @@ export default function TripScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [driverPos, setDriverPos] = useState(null);
-
-  useEffect(() => {
-    let active = true;
-    readPosition()
-      .then((p) => { if (active) setDriverPos(p); })
-      .catch(() => {});
-    const interval = setInterval(() => {
-      readPosition()
-        .then((p) => { if (active) setDriverPos(p); })
-        .catch(() => {});
-    }, 15000);
-    return () => { active = false; clearInterval(interval); };
-  }, []);
 
   const load = useCallback(async () => {
     setError('');
@@ -56,6 +41,18 @@ export default function TripScreen({ navigation }) {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
   useResync(load, [load]);
+
+  // The driver's own pings come back as this event, so their marker follows
+  // them without the screen being reloaded - the same stream the patient is
+  // watching, read from the other end.
+  useSocketEvent('trip:location', (p) => {
+    setTrip((prev) => (prev ? {
+      ...prev,
+      ambulance_location: { latitude: p.latitude, longitude: p.longitude },
+      eta_minutes: p.eta_minutes ?? prev.eta_minutes,
+      route_points: p.route_points?.length ? p.route_points : prev.route_points,
+    } : prev));
+  }, []);
 
   useSocketEvent('booking:cancelled', ({ reason }) => {
     setError(`This booking was cancelled: ${reason}`);
@@ -133,11 +130,6 @@ export default function TripScreen({ navigation }) {
     ? { latitude: trip.drop_latitude, longitude: trip.drop_longitude, label: 'Drop', color: colors.info }
     : { latitude: trip.latitude, longitude: trip.longitude, label: 'Pickup', color: colors.accent };
 
-  const markers = [
-    ...(driverPos ? [{ latitude: driverPos.latitude, longitude: driverPos.longitude, color: colors.ok, label: 'Ambulance', icon: '🚑', radius: 12 }] : []),
-    { latitude: target.latitude, longitude: target.longitude, color: target.color, label: target.label, icon: onboard ? '🏥' : '📍', radius: 11 },
-  ];
-
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.bg }}
@@ -165,10 +157,30 @@ export default function TripScreen({ navigation }) {
       </Card>
 
       <Card>
+        {/*
+          The crew's own view of the same journey the patient is watching:
+          where they are, where they are going, and the road between. A single
+          marker on an empty map told them nothing they did not already know.
+        */}
         <MapPanel
-          markers={markers}
+          markers={[
+            {
+              latitude: target.latitude,
+              longitude: target.longitude,
+              glyph: onboard ? '🏥' : '📍',
+              label: target.label,
+              labelAlways: true,
+            },
+            ...(trip.ambulance_location
+              ? [{
+                  ...trip.ambulance_location,
+                  glyph: '🚑',
+                  label: trip.eta_minutes != null ? `${trip.eta_minutes} min away` : 'You',
+                  labelAlways: true,
+                }]
+              : []),
+          ]}
           route={trip.route_points || []}
-          autoRoute={Boolean(!trip.route_points?.length && driverPos)}
           height={260}
         />
         <Button
@@ -193,6 +205,44 @@ export default function TripScreen({ navigation }) {
           {trip.notes ? <Row label="Notes" value={trip.notes} /> : null}
           <Row label="Requested" value={dateTimeOf(trip.booking_timestamp)} />
         </View>
+
+        {trip.doctor_name || trip.nurse_required || trip.doctor_notes ? (
+          <View
+            style={{
+              marginTop: spacing.md,
+              padding: spacing.md,
+              backgroundColor: `${colors.info}18`,
+              borderRadius: radius.md,
+              borderColor: `${colors.info}55`,
+              borderWidth: 1,
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+              <Text style={{ fontSize: 13.5, fontFamily: FONT.bold, color: colors.info }}>
+                👨‍⚕️ Medical Referral
+              </Text>
+              {trip.nurse_required ? (
+                <Pill label="NURSE NEEDED" tone={colors.danger} />
+              ) : null}
+            </View>
+            {trip.doctor_name ? (
+              <Row label="Recommended by" value={`Dr. ${trip.doctor_name.replace(/^Dr\.?\s*/i, '')}`} />
+            ) : null}
+            {trip.nurse_required ? (
+              <Row
+                label="Nurse support"
+                value="Required on board"
+                valueStyle={{ color: colors.danger, fontFamily: FONT.bold }}
+              />
+            ) : null}
+            {trip.doctor_notes ? (
+              <View style={{ marginTop: 4, paddingTop: 4, borderTopWidth: 1, borderColor: `${colors.info}33` }}>
+                <Small style={{ fontFamily: FONT.semibold, color: colors.text }}>Clinical Points & History:</Small>
+                <Text style={{ fontSize: 13, color: colors.text, marginTop: 2 }}>{trip.doctor_notes}</Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
         {/*
           The crew's own reason to call is almost always "we are outside and
           cannot see you", so this sits with the patient's details rather than

@@ -53,16 +53,7 @@ function parseFrom(value) {
   return m ? { name: m[1] || undefined, email: m[2] } : { email: String(value).trim() };
 }
 
-async function sendViaBrevo({ emailId, subject, body, html }) {
-  const payload = {
-    sender: parseFrom(config.email.from),
-    to: [{ email: emailId }],
-    subject,
-    textContent: body,
-  };
-  if (html) {
-    payload.htmlContent = html;
-  }
+async function sendViaBrevo({ emailId, subject, body }) {
   const res = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     headers: {
@@ -70,7 +61,12 @@ async function sendViaBrevo({ emailId, subject, body, html }) {
       'Content-Type': 'application/json',
       Accept: 'application/json',
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      sender: parseFrom(config.email.from),
+      to: [{ email: emailId }],
+      subject,
+      textContent: body,
+    }),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -104,7 +100,31 @@ function record({ recipientPhone, recipientEmail, channel, templateId, body, boo
     providerResponse ? JSON.stringify(providerResponse).slice(0, 2000) : null,
     nowIso()
   );
+
+  announce({
+    message_id: id, booking_id: bookingId || null, recipient_phone: recipientPhone,
+    recipient_email: recipientEmail || null, message_channel: channel,
+    message_template_id: templateId || null, body: body || null,
+    delivery_state: deliveryState, created_at: nowIso(),
+  });
+
   return id;
+}
+
+/**
+ * Tells the control room about a message the moment it is logged.
+ *
+ * The alert log is the one place that shows every WhatsApp, email and push the
+ * system sent, which makes it the evidence for F.6 and F.14 - and evidence
+ * nobody can watch arrive is half as convincing. Required at call time because
+ * the socket layer loads this module.
+ */
+function announce(row) {
+  try {
+    require('../realtime/socket').toAdmins('admin:message', row);
+  } catch {
+    // No socket server: a test, or a seed. The row is written regardless.
+  }
 }
 
 /** Meta rejects a template parameter containing a newline or a tab. */
@@ -216,7 +236,7 @@ function smtp() {
  * alert log stays a single list. Like sendWhatsApp it resolves rather than
  * rejects: a mail outage must not take a registration down with it.
  */
-async function sendEmail({ emailId, phoneNo, subject, body, templateId, bookingId, html }) {
+async function sendEmail({ emailId, phoneNo, subject, body, templateId, bookingId }) {
   const via = emailTransport();
   const log = (deliveryState, providerResponse) => record({
     recipientPhone: phoneNo, recipientEmail: emailId, channel: 'EMAIL',
@@ -231,17 +251,16 @@ async function sendEmail({ emailId, phoneNo, subject, body, templateId, bookingI
 
   try {
     if (via === 'brevo') {
-      const json = await sendViaBrevo({ emailId, subject, body, html });
+      const json = await sendViaBrevo({ emailId, subject, body });
       return log('SENT', { messageId: json.messageId });
     }
     const info = await smtp().sendMail({
-      from: config.email.from, to: emailId, subject, text: body, html,
+      from: config.email.from, to: emailId, subject, text: body,
     });
     return log('SENT', { messageId: info.messageId, accepted: info.accepted });
   } catch (err) {
     console.error(`[email:${via}] send failed:`, err.message);
-    log('FAILED', { error: err.message, detail: err.detail });
-    throw err;
+    return log('FAILED', { error: err.message, detail: err.detail });
   }
 }
 
@@ -252,25 +271,6 @@ async function sendEmail({ emailId, phoneNo, subject, body, templateId, bookingI
  */
 async function sendOtp({ phoneNo, otpCode, channel = 'WHATSAPP', emailId = null }) {
   const body = `Your Ambulance Booking System verification code is ${otpCode}. It is valid for 5 minutes. Do not share this code.`;
-  const html = `
-<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"></head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b1119; color: #f8fafc; padding: 24px; margin: 0;">
-  <div style="max-width: 480px; margin: 0 auto; background: #151e2b; border: 1px solid #23354d; border-radius: 12px; padding: 32px 24px; text-align: center;">
-    <div style="font-size: 40px; margin-bottom: 12px;">🚑</div>
-    <h2 style="color: #ffffff; margin-top: 0; font-size: 22px; font-weight: 700;">Ambulance Booking System</h2>
-    <p style="color: #94a3b8; font-size: 14px; line-height: 1.5; margin: 8px 0 20px 0;">Your one-time email verification code is:</p>
-    <div style="background: #0b1119; border: 2px solid #38bdf8; border-radius: 8px; padding: 14px 28px; font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #38bdf8; margin: 16px 0; display: inline-block;">
-      ${otpCode}
-    </div>
-    <p style="color: #94a3b8; font-size: 13px; line-height: 1.5; margin-top: 20px;">This code is valid for <strong>5 minutes</strong>. Never share this code with anyone.</p>
-    <hr style="border: none; border-top: 1px solid #23354d; margin: 24px 0 16px 0;" />
-    <p style="color: #64748b; font-size: 11px; margin: 0;">If you did not request this verification code, please ignore this email.</p>
-  </div>
-</body>
-</html>
-  `.trim();
 
   if (channel === 'EMAIL') {
     if (!emailId) throw new Error('sendOtp: channel EMAIL needs an emailId');
@@ -279,7 +279,6 @@ async function sendOtp({ phoneNo, otpCode, channel = 'WHATSAPP', emailId = null 
       phoneNo,
       subject: `${otpCode} is your Ambulance Booking verification code`,
       body,
-      html,
       templateId: config.whatsapp.templates.otp,
     });
   }
@@ -347,6 +346,9 @@ const templates = {
     if (booking.landmark) lines.push(`Landmark: ${booking.landmark}`);
     if (distanceKm != null) lines.push(`Distance: ${distanceKm.toFixed(2)} km`);
     if (booking.notes) lines.push(`Notes: ${booking.notes}`);
+    if (booking.doctor_name) lines.push(`Doctor: Dr. ${booking.doctor_name.replace(/^Dr\.?\s*/i, '')}`);
+    if (booking.doctor_notes) lines.push(`Clinical: ${booking.doctor_notes}`);
+    if (booking.nurse_required) lines.push('Nurse Required: Yes');
     lines.push(`Vehicle: ${provider.vehicle_reg_no}`);
     lines.push(`Respond in the driver app within ${expirySeconds} seconds, or the request moves to the next ambulance.`);
 
